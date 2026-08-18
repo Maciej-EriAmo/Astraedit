@@ -16,9 +16,9 @@ DEFAULT_FILE = "notatka.txt"
 CONFIG_FILE = pathlib.Path.home() / ".astraedit_config.json"
 
 # ---- Diagnostyka ----
-def print_status(msg, type="info"):
+def print_status(msg, kind="info"):
     symbols = {"info": "ℹ", "success": "✔", "error": "✖", "warn": "⚠"}
-    print(f"{symbols.get(type, '?')} {msg}")
+    print(f"{symbols.get(kind, '?')} {msg}")
 
 # ---- Wspólne funkcje I/O ----
 def is_binary_file(filepath):
@@ -43,18 +43,21 @@ def read_text_file_smart(path):
             continue
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
-            return f.read(), "utf-8 (z błędami)"
+            # Real codec name so a later save does not fail with LookupError.
+            return f.read(), "utf-8"
     except Exception as e:
         print_status(f"Błąd odczytu {path}: {e}", "error")
-        return "", "unknown"
+        return "", "utf-8"
 
 def read_text_file(path):
     content, _ = read_text_file_smart(path)
     return content
 
 def write_text_file(path, text, encoding='utf-8'):
+    codec = encoding if encoding and encoding.isascii() and " " not in encoding else "utf-8"
     try:
-        with open(path, "w", encoding=encoding, errors="replace") as f:
+        pathlib.Path(path).parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding=codec, errors="replace") as f:
             f.write(text)
     except Exception as e:
         print_status(f"Błąd zapisu {path}: {e}", "error")
@@ -113,7 +116,11 @@ class AstraEditTUI:
         self.current_folder = pathlib.Path(self.file_path).parent
 
         self.search_field = SearchToolbar()
-        lexer = PygmentsLexer(get_best_lexer(self.file_path).__class__) if get_lexer_for_filename else None
+        lexer = None
+        if get_lexer_for_filename:
+            best = get_best_lexer(self.file_path)
+            if best is not None:
+                lexer = PygmentsLexer(best.__class__)
 
         initial_text = ""
         if os.path.exists(self.file_path):
@@ -154,6 +161,11 @@ class AstraEditTUI:
         col = self.editor.document.cursor_position_col + 1
         return [("class:status", f" Ln {row}, Col {col} | {self.status_text} ")]
 
+    def _pop_float(self, app):
+        if app.layout.container.floats:
+            app.layout.container.floats.pop()
+        app.layout.focus(self.editor)
+
     def create_key_bindings(self):
         kb = KeyBindings()
         
@@ -163,7 +175,8 @@ class AstraEditTUI:
                 write_text_file(self.file_path, self.editor.text)
                 self.is_modified = False
                 self.frame.title = self.get_title()
-            except Exception: pass
+            except Exception as e:
+                print_status(f"Błąd zapisu {self.file_path}: {e}", "error")
 
         @kb.add("c-q")
         async def _(event):
@@ -195,8 +208,7 @@ class AstraEditTUI:
             try:
                 line_num = int(tf.text.strip())
                 self.editor.buffer.cursor_position = self.editor.buffer.document.translate_row_col_to_index(line_num - 1, 0)
-                app.layout.container.floats.pop()
-                app.layout.focus(self.editor)
+                self._pop_float(app)
             except (ValueError, IndexError):
                 pass
         
@@ -205,7 +217,7 @@ class AstraEditTUI:
             body=HSplit([Label("Numer linii:"), tf]),
             buttons=[
                 Button("OK", handler=go), 
-                Button("Anuluj", handler=lambda: app.layout.container.floats.pop())
+                Button("Anuluj", handler=lambda: self._pop_float(app))
             ]
         )
         app.layout.container.floats.append(Float(content=dialog))
@@ -216,48 +228,53 @@ class AstraEditTUI:
         def save():
             path = tf.text.strip()
             if path:
-                write_text_file(path, self.editor.text)
-                self.file_path = path
+                try:
+                    write_text_file(path, self.editor.text)
+                except Exception:
+                    return
+                self.file_path = str(pathlib.Path(path).expanduser().resolve())
                 self.is_modified = False
                 self.frame.title = self.get_title()
-                app.layout.container.floats.pop()
-                app.layout.focus(self.editor)
+                self._pop_float(app)
         
         dialog = Dialog(
             title="Zapisz jako", 
             body=HSplit([Label("Ścieżka:"), tf]),
             buttons=[
                 Button("OK", handler=save), 
-                Button("Anuluj", handler=lambda: app.layout.container.floats.pop())
+                Button("Anuluj", handler=lambda: self._pop_float(app))
             ]
         )
         app.layout.container.floats.append(Float(content=dialog))
         app.layout.focus(tf)
 
     def run_script(self, app):
-        """Uruchom skrypt (TUI)"""
+        """Uruchom skrypt (TUI). run_in_terminal działa na Windows; suspend/resume nie."""
         try:
             write_text_file(self.file_path, self.editor.text)
             self.is_modified = False
             self.frame.title = self.get_title()
-        except:
-            pass
-        
-        app.suspend_to_background()
-        print(f"\n{'='*60}")
-        print(f"  Uruchamianie: {pathlib.Path(self.file_path).name}")
-        print(f"{'='*60}\n")
-        
-        if self.file_path.endswith('.py'):
-            exit_code = os.system(f'"{sys.executable}" "{self.file_path}"')
-        else:
-            exit_code = os.system(f'"{self.file_path}"')
-        
-        print(f"\n{'='*60}")
-        print(f"  Zakończono (kod wyjścia: {exit_code})")
-        print(f"{'='*60}")
-        input("\nNaciśnij Enter, aby wrócić do edytora...")
-        app.resume()
+        except Exception as e:
+            print_status(f"Błąd zapisu {self.file_path}: {e}", "error")
+            return
+
+        def _run():
+            print(f"\n{'='*60}")
+            print(f"  Uruchamianie: {pathlib.Path(self.file_path).name}")
+            print(f"{'='*60}\n")
+            if self.file_path.lower().endswith('.py'):
+                exit_code = os.system(f'"{sys.executable}" "{self.file_path}"')
+            else:
+                exit_code = os.system(f'"{self.file_path}"')
+            print(f"\n{'='*60}")
+            print(f"  Zakończono (kod wyjścia: {exit_code})")
+            print(f"{'='*60}")
+            try:
+                input("\nNaciśnij Enter, aby wrócić do edytora...")
+            except EOFError:
+                pass
+
+        app.run_in_terminal(_run)
 
     def run(self):
         style = Style.from_dict({
@@ -302,7 +319,7 @@ class EditorTab:
         container.pack(fill="both", expand=True)
 
         self.line_numbers = tk.Text(
-            container, width=4, padx=3, takefocus=0, border=0,
+            container, width=5, padx=3, takefocus=0, border=0,
             bg=app.line_num_bg, fg=app.line_num_fg, 
             state="disabled", font=("Consolas", 11)
         )
@@ -397,6 +414,7 @@ class EditorTab:
         
         end_index = self.text_area.index("end-1c") 
         line_count = int(end_index.split('.')[0])
+        self.line_numbers.config(width=max(4, len(str(line_count))))
         nums = "\n".join(str(i) for i in range(1, line_count + 1))
         
         self.line_numbers.insert("1.0", nums)
@@ -491,6 +509,8 @@ class EditorTab:
                 self.text_area.tag_remove(tag, "1.0", "end")
 
         lexer = get_best_lexer(self.file_path)
+        if lexer is None:
+            return
         
         try:
             line_idx = 1
@@ -693,7 +713,8 @@ class AstraEditGUI:
             
             # Sprawdź czy kliknięto w prawy obszar (gdzie jest X)
             if event.x > x + width - 25:
-                tab_frame = self.notebook.nametowidget(self.notebook.tabs()[clicked_tab])
+                tabs = self.notebook.tabs()
+                tab_frame = self.notebook.nametowidget(tabs[int(clicked_tab)])
                 
                 for tab in self._tabs:
                     if tab.frame == tab_frame:
@@ -815,22 +836,26 @@ class AstraEditGUI:
         """Uruchom subprocess w tle (wątek)"""
         try:
             # Określ komendę
-            if file_path.endswith('.py'):
+            if file_path.lower().endswith('.py'):
                 cmd = [sys.executable, "-u", file_path]
             else:
                 # Dla innych plików spróbuj uruchomić bezpośrednio
                 cmd = [file_path]
             
             # Popen z obsługą stdin/stdout/stderr
-            self.process = subprocess.Popen(
-                cmd,
+            popen_kw = dict(
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 stdin=subprocess.PIPE,
                 text=True,
                 bufsize=1,
-                cwd=pathlib.Path(file_path).parent  # Uruchom w katalogu pliku
+                cwd=str(pathlib.Path(file_path).parent),
+                encoding="utf-8",
+                errors="replace",
             )
+            if os.name == "nt":
+                popen_kw["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            self.process = subprocess.Popen(cmd, **popen_kw)
             
             # Wątki do czytania stdout i stderr
             threading.Thread(target=self._reader, args=(self.process.stdout, None), daemon=True).start()
@@ -887,25 +912,22 @@ class AstraEditGUI:
         self.console_area.config(state="disabled")
 
     def send_input(self, event):
-        """Wysyła tekst z paska input do procesu"""
+        """Wysyła tekst z paska input do procesu (pusty Enter = nowa linia)."""
         text = self.input_entry.get()
         self.input_entry.delete(0, tk.END)
-        
-        if not text:
+
+        running = self.process and self.process.poll() is None
+        if not running:
+            if text:
+                self.log_to_console("⚠ Proces nie działa.\n", "stderr")
             return
-        
-        if self.process and self.process.poll() is None:
-            try:
-                # Wyświetl co wpisał użytkownik (w zielonym)
-                self.log_to_console(f"{text}\n", "stdin")
-                
-                # Wyślij do procesu
-                self.process.stdin.write(text + "\n")
-                self.process.stdin.flush()
-            except Exception as e:
-                self.log_to_console(f"❌ Błąd zapisu do stdin: {e}\n", "stderr")
-        else:
-            self.log_to_console("⚠ Proces nie działa.\n", "stderr")
+
+        try:
+            self.log_to_console(f"{text}\n", "stdin")
+            self.process.stdin.write(text + "\n")
+            self.process.stdin.flush()
+        except Exception as e:
+            self.log_to_console(f"❌ Błąd zapisu do stdin: {e}\n", "stderr")
 
     def stop_process(self):
         """Zatrzymaj proces"""
@@ -976,8 +998,11 @@ class AstraEditGUI:
             pass
         return None
 
-    def close_tab(self, tab):
-        """Zamknij konkretną kartę"""
+    def close_tab(self, tab, allow_empty=False):
+        """Zamknij konkretną kartę. Zwraca False gdy użytkownik anuluje."""
+        if tab not in self._tabs:
+            return True
+
         if tab.is_modified:
             self.notebook.select(tab.frame)
             
@@ -986,16 +1011,16 @@ class AstraEditGUI:
                 f"Czy zapisać zmiany w {tab.get_short_name()}?"
             )
             if response is None:
-                return
-            elif response:
-                if not tab.save():
-                    return
+                return False
+            if response and not tab.save():
+                return False
         
         self._tabs.remove(tab)
         self.notebook.forget(tab.frame)
         
-        if len(self._tabs) == 0:
+        if not allow_empty and not self._tabs:
             self.new_tab()
+        return True
 
     def close_current_tab(self):
         """Zamknij aktualną kartę"""
@@ -1009,14 +1034,17 @@ class AstraEditGUI:
         if not current:
             return
         
-        tabs_to_close = [tab for tab in self._tabs if tab != current]
-        for tab in tabs_to_close:
-            self.close_tab(tab)
+        for tab in [tab for tab in self._tabs if tab != current]:
+            if not self.close_tab(tab):
+                break
 
     def close_all_tabs(self):
-        """Zamknij wszystkie karty"""
-        while len(self._tabs) > 0:
-            self.close_tab(self._tabs[0])
+        """Zamknij wszystkie karty (bez zapętlenia na nowej karcie / Anuluj)."""
+        for tab in list(self._tabs):
+            if not self.close_tab(tab, allow_empty=True):
+                break
+        if not self._tabs:
+            self.new_tab()
 
     def on_tab_changed(self, event=None):
         """Obsłuż zmianę karty"""
@@ -1096,9 +1124,25 @@ class AstraEditGUI:
     # ==========================================
     # FIND & REPLACE z REGEX
     # ==========================================
+    def _find_dialog_open(self):
+        try:
+            return self.find_window is not None and bool(self.find_window.winfo_exists())
+        except tk.TclError:
+            return False
+
+    def _current_find_pattern(self):
+        try:
+            if hasattr(self, "find_entry") and self.find_entry is not None and self.find_entry.winfo_exists():
+                if hasattr(self, "regex_var") and self.regex_var is not None:
+                    self.use_regex = bool(self.regex_var.get())
+                return self.find_entry.get()
+        except tk.TclError:
+            pass
+        return self.last_search
+
     def show_find_dialog(self):
         """Pokaż okno wyszukiwania"""
-        if self.find_window and tk.Toplevel.winfo_exists(self.find_window):
+        if self._find_dialog_open():
             self.find_window.focus()
             return
         
@@ -1137,7 +1181,7 @@ class AstraEditGUI:
 
     def show_replace_dialog(self):
         """Pokaż okno zamiany"""
-        if self.find_window and tk.Toplevel.winfo_exists(self.find_window):
+        if self._find_dialog_open():
             self.find_window.destroy()
         
         self.find_window = tk.Toplevel(self.root)
@@ -1182,11 +1226,7 @@ class AstraEditGUI:
         if not tab:
             return
         
-        if hasattr(self, 'find_entry'):
-            pattern = self.find_entry.get()
-            self.use_regex = self.regex_var.get()
-        else:
-            pattern = self.last_search
+        pattern = self._current_find_pattern()
         
         if not pattern:
             return
@@ -1328,6 +1368,7 @@ class AstraEditGUI:
             
             text_widget.delete("1.0", tk.END)
             text_widget.insert("1.0", new_content)
+            tab.update_syntax_highlighting()
             
             self.status_var.set(f"Zamieniono {count} wystąpień")
             messagebox.showinfo("Zamień wszystkie", f"Zamieniono {count} wystąpień")
@@ -1419,15 +1460,29 @@ class AstraEditGUI:
         self.root.after(self.autosave_interval, self.schedule_autosave)
 
     # Recent files
-    def load_recent_files(self):
+    def _load_config(self):
         try:
             if CONFIG_FILE.exists():
-                with open(CONFIG_FILE, "r") as f:
+                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    return data.get("recent_files", [])
+                    if isinstance(data, dict):
+                        return data
         except Exception:
             pass
-        return []
+        return {}
+
+    def _save_config(self, updates):
+        data = self._load_config()
+        data.update(updates)
+        try:
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
+
+    def load_recent_files(self):
+        recent = self._load_config().get("recent_files", [])
+        return recent if isinstance(recent, list) else []
 
     def save_recent_file(self, filepath):
         try:
@@ -1437,11 +1492,7 @@ class AstraEditGUI:
             if filepath in recent:
                 recent.remove(filepath)
             recent.insert(0, filepath)
-            recent = recent[:10]
-            
-            data = {"recent_files": recent}
-            with open(CONFIG_FILE, "w") as f:
-                json.dump(data, f, indent=2)
+            self._save_config({"recent_files": recent[:10]})
         except Exception:
             pass
 
