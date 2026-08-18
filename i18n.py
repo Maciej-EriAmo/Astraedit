@@ -24,7 +24,7 @@ _ALIASES = {
 
 _STRINGS: Dict[str, Dict[str, str]] = {
     "en": {
-        "app_name": "AstraEdit 4.5 (Interactive IDE)",
+        "app_name": "AstraEdit 4.5",
         "untitled_file": "untitled.txt",
         "untitled_n": "untitled_{n}.txt",
         "status_ready": "Ready | F5: Run | F1: Help",
@@ -50,6 +50,8 @@ _STRINGS: Dict[str, Dict[str, str]] = {
         "readonly_msg": "File opened in read-only mode.\n{path}",
         "error": "Error",
         "info": "Info",
+        "run_only_python": "F5 runs Python files only (.py, .pyw). Other files stay in the editor.",
+        "binary_save_blocked": "This path is a binary file. Use Save As to write a new text file.",
         "process_running": "A process is already running. Use STOP to terminate it.",
         "running": "Running: {name}",
         "finished": "Finished (exit code: {code})",
@@ -96,7 +98,7 @@ _STRINGS: Dict[str, Dict[str, str]] = {
         "menu_replace": "Find and Replace... (Ctrl+H)",
         "menu_goto": "Go to Line... (Ctrl+G)",
         "menu_run": "Run",
-        "menu_run_file": "Run file (F5)",
+        "menu_run_file": "Run Python file (F5)",
         "menu_stop": "Stop process",
         "menu_clear": "Clear console",
         "menu_view": "View",
@@ -134,7 +136,7 @@ _STRINGS: Dict[str, Dict[str, str]] = {
         "sc_close": "Close tab",
         "sc_close_x": "Close tab (button)",
         "sc_save_as": "Save As...",
-        "sc_run": "Run file in console",
+        "sc_run": "Run Python file in console",
         "sc_find": "Find (+ Regex option)",
         "sc_find_next": "Find next",
         "sc_replace": "Find and Replace",
@@ -145,22 +147,21 @@ _STRINGS: Dict[str, Dict[str, str]] = {
         "about_title": "About",
         "about_body": (
             "{app}\n\n"
-            "Hybrid IDE (TUI + GUI)\n\n"
+            "Text editor (GUI + TUI) with a Python run console.\n\n"
             "Features:\n"
-            "- Multiple files (tabs with × buttons)\n"
-            "- Interactive console (input/output)\n"
-            "- Run scripts (F5)\n"
-            "- Syntax highlighting (Pygments)\n"
+            "- Multiple files in the GUI (tabs; click × to close)\n"
+            "- Console stdin/stdout/stderr for .py / .pyw (F5)\n"
+            "- Syntax highlighting (Pygments, if installed)\n"
             "- Find & Replace with Regex\n"
             "- Bracket matching\n"
-            "- Auto-save\n"
-            "- Binary-file protection\n"
+            "- Auto-save every 30s when enabled\n"
+            "- Binary files are not overwritten as text\n"
             "- English / Polish interface\n"
-            "- Dark mode\n\n"
+            "- Dark theme\n\n"
             "Author: Maciej Mazur\n"
             "GitHub: @Maciej-EriAmo"
         ),
-        "arg_desc": "Hybrid text editor with an interactive console",
+        "arg_desc": "Text editor with a Python run console",
         "arg_files": "Files to open",
         "arg_gui": "Force GUI mode",
         "arg_tui": "Force terminal (TUI) mode",
@@ -169,7 +170,7 @@ _STRINGS: Dict[str, Dict[str, str]] = {
         "cli_lang_saved": "Language set to {lang}",
     },
     "pl": {
-        "app_name": "AstraEdit 4.5 (Interactive IDE)",
+        "app_name": "AstraEdit 4.5",
         "untitled_file": "notatka.txt",
         "untitled_n": "notatka_{n}.txt",
         "status_ready": "Gotowy | F5: Uruchom | F1: Pomoc",
@@ -195,6 +196,8 @@ _STRINGS: Dict[str, Dict[str, str]] = {
         "readonly_msg": "Plik otwarty w trybie tylko do odczytu.\n{path}",
         "error": "Błąd",
         "info": "Info",
+        "run_only_python": "F5 uruchamia tylko pliki Pythona (.py, .pyw). Inne zostają w edytorze.",
+        "binary_save_blocked": "Ta ścieżka to plik binarny. Użyj Zapisz jako, żeby zapisać nowy plik tekstowy.",
         "process_running": "Proces już działa. Użyj przycisku STOP aby go zatrzymać.",
         "running": "Uruchamianie: {name}",
         "finished": "Zakończono (kod wyjścia: {code})",
@@ -241,7 +244,7 @@ _STRINGS: Dict[str, Dict[str, str]] = {
         "menu_replace": "Znajdź i zamień... (Ctrl+H)",
         "menu_goto": "Przejdź do linii... (Ctrl+G)",
         "menu_run": "Uruchom",
-        "menu_run_file": "Uruchom plik (F5)",
+        "menu_run_file": "Uruchom plik Pythona (F5)",
         "menu_stop": "Zatrzymaj proces",
         "menu_clear": "Wyczyść konsolę",
         "menu_view": "Widok",
@@ -279,7 +282,7 @@ _STRINGS: Dict[str, Dict[str, str]] = {
         "sc_close": "Zamknij kartę",
         "sc_close_x": "Zamknij kartę (przycisk)",
         "sc_save_as": "Zapisz jako...",
-        "sc_run": "Uruchom plik w konsoli",
+        "sc_run": "Uruchom plik Pythona w konsoli",
         "sc_find": "Znajdź (+ opcja Regex)",
         "sc_find_next": "Znajdź następny",
         "sc_replace": "Znajdź i zamień",
@@ -290,22 +293,21 @@ _STRINGS: Dict[str, Dict[str, str]] = {
         "about_title": "O programie",
         "about_body": (
             "{app}\n\n"
-            "Hybrydowy IDE (TUI + GUI)\n\n"
+            "Edytor tekstu (GUI + TUI) z konsolą dla Pythona.\n\n"
             "Funkcje:\n"
-            "- Obsługa wielu plików (karty z przyciskami ×)\n"
-            "- Interaktywna konsola (input/output)\n"
-            "- Uruchamianie skryptów (F5)\n"
-            "- Syntax highlighting (Pygments)\n"
-            "- Find & Replace z Regex\n"
-            "- Bracket matching\n"
-            "- Auto-zapisywanie\n"
-            "- Ochrona przed plikami binarnymi\n"
+            "- Wiele plików w GUI (karty; kliknij × żeby zamknąć)\n"
+            "- Konsola stdin/stdout/stderr dla .py / .pyw (F5)\n"
+            "- Kolorowanie składni (Pygments, jeśli jest)\n"
+            "- Znajdź i zamień z regex\n"
+            "- Dopasowanie nawiasów\n"
+            "- Auto-zapis co 30 s, gdy włączony\n"
+            "- Pliki binarne nie są nadpisywane jako tekst\n"
             "- Interfejs angielski / polski\n"
-            "- Dark mode\n\n"
+            "- Ciemny motyw\n\n"
             "Autor: Maciej Mazur\n"
             "GitHub: @Maciej-EriAmo"
         ),
-        "arg_desc": "Hybrydowy edytor tekstu z interaktywną konsolą",
+        "arg_desc": "Edytor tekstu z konsolą dla Pythona",
         "arg_files": "Pliki do otwarcia",
         "arg_gui": "Wymuś tryb GUI",
         "arg_tui": "Wymuś tryb konsolowy (TUI)",

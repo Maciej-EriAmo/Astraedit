@@ -7,6 +7,7 @@ import os
 import pathlib
 import queue
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -14,8 +15,10 @@ from time import time
 
 from i18n import detect_lang, get_lang, set_lang, t
 
-APP_NAME = "AstraEdit 4.5 (Interactive IDE)"
+APP_NAME = "AstraEdit 4.5"
 CONFIG_FILE = pathlib.Path.home() / ".astraedit_config.json"
+PYTHON_SUFFIXES = (".py", ".pyw")
+ICON_FILE = pathlib.Path(__file__).resolve().with_name("astraedit.ico")
 
 # ---- Config ----
 def load_config():
@@ -36,14 +39,46 @@ def save_config(updates):
     try:
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
-    except Exception:
-        pass
+    except Exception as e:
+        print_status(t("write_error", path=str(CONFIG_FILE), err=e), "error")
 
 
 # ---- Diagnostics ----
 def print_status(msg, kind="info"):
     symbols = {"info": "ℹ", "success": "✔", "error": "✖", "warn": "⚠"}
     print(f"{symbols.get(kind, '?')} {msg}")
+
+
+def is_python_source(path):
+    return str(path).lower().endswith(PYTHON_SUFFIXES)
+
+
+def terminate_process_tree(proc):
+    """Kill the run child and its descendants. Does not touch this editor."""
+    if proc is None or proc.poll() is not None:
+        return
+    if os.name == "nt":
+        try:
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                capture_output=True,
+                check=False,
+                creationflags=flags,
+            )
+            return
+        except Exception:
+            pass
+    else:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            return
+        except Exception:
+            pass
+    try:
+        proc.kill()
+    except Exception:
+        pass
 
 
 # ---- Shared I/O ----
@@ -151,7 +186,7 @@ class AstraEditTUI:
     def __init__(self, file_path):
         self.file_path = str(pathlib.Path(file_path).expanduser().resolve())
         self.is_modified = False
-        self.current_folder = pathlib.Path(self.file_path).parent
+        self.binary_blocked = False
 
         self.search_field = SearchToolbar()
         lexer = None
@@ -164,6 +199,7 @@ class AstraEditTUI:
         if os.path.exists(self.file_path):
             if is_binary_file(self.file_path):
                 initial_text = t("tui_binary")
+                self.binary_blocked = True
             else:
                 initial_text = read_text_file(self.file_path)
 
@@ -212,22 +248,14 @@ class AstraEditTUI:
 
         @kb.add("c-s")
         def _(event):
-            try:
-                write_text_file(self.file_path, self.editor.text)
-                self.is_modified = False
-                self.frame.title = self.get_title()
-            except Exception as e:
-                print_status(t("write_error", path=self.file_path, err=e), "error")
+            self.save_current()
 
         @kb.add("c-q")
         async def _(event):
-            if self.is_modified and await yes_no_dialog(
-                t("exit_title"), t("exit_save")
-            ).run_async():
-                try:
-                    write_text_file(self.file_path, self.editor.text)
-                except Exception:
-                    pass
+            if self.is_modified:
+                if await yes_no_dialog(t("exit_title"), t("exit_save")).run_async():
+                    if not self.save_current():
+                        return
             event.app.exit()
 
         @kb.add("c-f")
@@ -248,6 +276,19 @@ class AstraEditTUI:
 
         return kb
 
+    def save_current(self):
+        if self.binary_blocked:
+            print_status(t("binary_save_blocked"), "error")
+            return False
+        try:
+            write_text_file(self.file_path, self.editor.text)
+            self.is_modified = False
+            self.frame.title = self.get_title()
+            return True
+        except Exception as e:
+            print_status(t("write_error", path=self.file_path, err=e), "error")
+            return False
+
     def goto_line_dialog(self, app):
         tf = TextArea(multiline=False)
 
@@ -259,7 +300,7 @@ class AstraEditTUI:
                 )
                 self._pop_float(app)
             except (ValueError, IndexError):
-                pass
+                self.status_text = t("invalid_line")
 
         dialog = Dialog(
             title=t("dlg_goto"),
@@ -284,6 +325,7 @@ class AstraEditTUI:
             except Exception:
                 return
             self.file_path = str(pathlib.Path(path).expanduser().resolve())
+            self.binary_blocked = False
             self.is_modified = False
             self.frame.title = self.get_title()
             self._pop_float(app)
@@ -300,12 +342,13 @@ class AstraEditTUI:
         app.layout.focus(tf)
 
     def run_script(self, app):
-        try:
-            write_text_file(self.file_path, self.editor.text)
-            self.is_modified = False
-            self.frame.title = self.get_title()
-        except Exception as e:
-            print_status(t("write_error", path=self.file_path, err=e), "error")
+        if not is_python_source(self.file_path):
+            print_status(t("run_only_python"), "warn")
+            return
+        if self.binary_blocked:
+            print_status(t("binary_save_blocked"), "error")
+            return
+        if not self.save_current():
             return
 
         def _run():
@@ -313,10 +356,7 @@ class AstraEditTUI:
             print(f"\n{'=' * 60}")
             print(f"  {t('running', name=name)}")
             print(f"{'=' * 60}\n")
-            if self.file_path.lower().endswith(".py"):
-                exit_code = os.system(f'"{sys.executable}" "{self.file_path}"')
-            else:
-                exit_code = os.system(f'"{self.file_path}"')
+            exit_code = os.system(f'"{sys.executable}" "{self.file_path}"')
             print(f"\n{'=' * 60}")
             print(f"  {t('finished', code=exit_code)}")
             print(f"{'=' * 60}")
@@ -420,6 +460,9 @@ class EditorTab:
         self.text_area.bind("<<Modified>>", self.on_modified)
         self.text_area.bind("<KeyRelease>", self.on_key_release_combined)
         self.text_area.bind("<Button-1>", lambda e: self.app.root.after(10, self.update_combined))
+        self.text_area.bind("<<Paste>>", lambda e: self.app.root.after(20, self._after_paste), add="+")
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self.text_area.bind(seq, lambda e: self.app.root.after_idle(self.update_line_numbers), add="+")
 
         self.load_file()
 
@@ -470,6 +513,11 @@ class EditorTab:
 
     def update_combined(self):
         self.update_line_numbers()
+        self.app.update_cursor_position()
+
+    def _after_paste(self):
+        self.update_line_numbers()
+        self.update_syntax_highlighting()
         self.app.update_cursor_position()
 
     def update_line_numbers(self):
@@ -588,6 +636,12 @@ class EditorTab:
                     tag_name = "Number"
                 elif "Builtin" in str_token:
                     tag_name = "Name.Builtin"
+                elif "Operator" in str_token:
+                    tag_name = "Operator"
+                elif "Punctuation" in str_token:
+                    tag_name = "Punctuation"
+                elif "Name" in str_token:
+                    tag_name = "Name"
 
                 lines = text.split("\n")
                 start_idx = f"{line_idx}.{col_idx}"
@@ -625,6 +679,14 @@ class AstraEditGUI:
         self.root = tk.Tk()
         self.root.title(f"{APP_NAME} [GUI]")
         self.root.geometry("1100x800")
+        if ICON_FILE.is_file():
+            try:
+                self.root.iconbitmap(default=str(ICON_FILE))
+            except Exception:
+                try:
+                    self.root.iconbitmap(str(ICON_FILE))
+                except Exception:
+                    pass
 
         self.bg_color = "#1e1e1e"
         self.fg_color = "#d4d4d4"
@@ -647,6 +709,7 @@ class AstraEditGUI:
         self._tabs = []
         self.process = None
         self.msg_queue = queue.Queue()
+        self.recent_menu = None
 
         self.setup_ui()
         self.setup_menu()
@@ -660,9 +723,7 @@ class AstraEditGUI:
         else:
             self.new_tab()
 
-        if self.autosave_enabled:
-            self.schedule_autosave()
-
+        self.schedule_autosave()
         self.root.after(100, self.process_queue)
 
     def setup_ui(self):
@@ -923,6 +984,10 @@ class AstraEditGUI:
             messagebox.showinfo(t("info"), t("process_running"))
             return
 
+        if not is_python_source(tab.file_path):
+            messagebox.showinfo(t("info"), t("run_only_python"))
+            return
+
         if not tab.save():
             return
 
@@ -942,10 +1007,7 @@ class AstraEditGUI:
 
     def _run_subprocess(self, file_path):
         try:
-            if file_path.lower().endswith(".py"):
-                cmd = [sys.executable, "-u", file_path]
-            else:
-                cmd = [file_path]
+            cmd = [sys.executable, "-u", file_path]
 
             popen_kw = {
                 "stdout": subprocess.PIPE,
@@ -959,6 +1021,8 @@ class AstraEditGUI:
             }
             if os.name == "nt":
                 popen_kw["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            else:
+                popen_kw["start_new_session"] = True
 
             self.process = subprocess.Popen(cmd, **popen_kw)
 
@@ -1032,7 +1096,7 @@ class AstraEditGUI:
 
     def stop_process(self):
         if self.process and self.process.poll() is None:
-            self.process.kill()
+            terminate_process_tree(self.process)
             self.log_to_console(f"\n⚠ {t('process_stopped')}\n", "stderr")
             self.stop_btn.config(state="disabled", bg="#8b0000")
             self.process = None
@@ -1624,22 +1688,28 @@ class AstraEditGUI:
             recent.remove(filepath)
         recent.insert(0, filepath)
         save_config({"recent_files": recent[:10]})
+        self.rebuild_recent_menu()
 
     def add_recent_files_menu(self, filemenu):
-        recent_menu = tk.Menu(filemenu, tearoff=0, bg=self.bg_color, fg=self.fg_color)
-        recent = self.load_recent_files()
+        self.recent_menu = tk.Menu(filemenu, tearoff=0, bg=self.bg_color, fg=self.fg_color)
+        self.rebuild_recent_menu()
+        filemenu.add_cascade(label=t("menu_recent"), menu=self.recent_menu)
+
+    def rebuild_recent_menu(self):
+        menu = getattr(self, "recent_menu", None)
+        if menu is None:
+            return
+        menu.delete(0, "end")
         added = False
-        if recent:
-            for fp in recent[:10]:
-                if os.path.exists(fp):
-                    recent_menu.add_command(
-                        label=pathlib.Path(fp).name,
-                        command=lambda p=fp: self.open_file(p),
-                    )
-                    added = True
+        for fp in self.load_recent_files()[:10]:
+            if os.path.exists(fp):
+                menu.add_command(
+                    label=pathlib.Path(fp).name,
+                    command=lambda p=fp: self.open_file(p),
+                )
+                added = True
         if not added:
-            recent_menu.add_command(label=t("menu_recent_empty"), state="disabled")
-        filemenu.add_cascade(label=t("menu_recent"), menu=recent_menu)
+            menu.add_command(label=t("menu_recent_empty"), state="disabled")
 
     def show_help(self):
         help_win = tk.Toplevel(self.root)
@@ -1717,7 +1787,7 @@ class AstraEditGUI:
             response = messagebox.askyesno(t("process_alive_title"), t("process_alive_msg"))
             if not response:
                 return
-            self.process.kill()
+            terminate_process_tree(self.process)
 
         modified_tabs = [tab for tab in self._tabs if tab.is_modified]
         if modified_tabs:

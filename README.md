@@ -1,4 +1,4 @@
-# AstraEdit 4.5 — Interactive IDE
+# AstraEdit 4.5 — text editor + Python console
 
 [![Version](https://img.shields.io/badge/version-4.5-blue)](https://github.com/Maciej-EriAmo/Astraedit)
 [![Python](https://img.shields.io/badge/python-3.7+-green)](https://www.python.org/)
@@ -6,7 +6,7 @@
 
 **English** | [Polski](README.pl.md)
 
-Hybrid text editor / small IDE written in Python. It runs as a **GUI** (Tkinter) or a **TUI** (prompt_toolkit), with an interactive console so you can run the current file (F5), type into `input()`, and see stdout/stderr live.
+Hybrid text editor written in Python. It runs as a **GUI** (Tkinter) or a **TUI** (prompt_toolkit). In the GUI you can run the current **Python** file (F5), type into `input()` on the `>>>` bar, and see stdout/stderr live. TUI F5 drops to the terminal for the same `.py` / `.pyw` run.
 
 ---
 
@@ -14,34 +14,34 @@ Hybrid text editor / small IDE written in Python. It runs as a **GUI** (Tkinter)
 
 ### Interface
 - **Dual mode**: GUI (Tkinter) and TUI (terminal)
-- **Tabs**: several files at once, close with ×
+- **Tabs (GUI)**: several files at once; the × in the tab title is a click target, not a separate widget
 - **Dark theme**: VS Code–style colors
-- **Split view**: editor + interactive console
+- **Split view (GUI)**: editor + run console
 - **English / Polish**: `--lang en|pl`, View → Language, or `ASTRAEDIT_LANG`
 
 ### Editing
-- Syntax highlighting (Pygments)
-- Line numbers (width grows with the file)
+- Syntax highlighting when Pygments is installed (keywords, comments, strings, numbers, names, operators)
+- Line numbers (width grows with the file; follows mouse-wheel scroll)
 - Bracket matching (`()` `[]` `{}` `<>`, 2000-character search cap)
 - Undo / Redo
-- Auto-save every 30 seconds (skips read-only files)
+- Auto-save every 30 seconds when the View checkbox is on (skips read-only files)
 
 ### Search
 - Find & Replace, including regular expressions
-- Incremental / next match (F3)
+- Find next (F3) — not search-as-you-type
 - Case-insensitive by default
 - Go to line (Ctrl+G)
 
 ### Run
-- Interactive console with stdin / stdout / stderr
-- Live `input()` from the `>>>` bar (empty Enter sends a newline)
-- STOP button to kill the process
+- **Python only** (`.py`, `.pyw`). Other files stay in the editor; F5 explains why.
+- GUI console: stdin / stdout / stderr; type into `>>>` (empty Enter sends a newline)
+- STOP kills the child process tree (`taskkill /T` on Windows)
 - Colored output: green stdin, red stderr, blue status
-- F5 runs the current file (saved first)
+- F5 saves first, then runs
 
 ### Safety
-- Binary-file detection (NUL in the first 1 KB)
-- Encoding auto-detect: UTF-8, UTF-8-SIG, CP1250, Latin-1, ISO-8859-2
+- Binary-file detection (NUL in the first 1 KB). Those files are not saved back as text.
+- Encoding tries, in order: UTF-8, UTF-8-SIG, CP1250, Latin-1, ISO-8859-2 (not a charset detector)
 - Read-only mode when the file is not writable
 - Prompt before closing unsaved tabs
 
@@ -115,8 +115,8 @@ If `--lang` is omitted, AstraEdit uses the saved config, then the environment, t
 
 ### Interactive run
 
-1. Open a Python file that calls `input()`.
-2. Press **F5**.
+1. Open a `.py` file that calls `input()`.
+2. Press **F5** (non-Python files are not executed).
 3. Type answers in the `>>>` bar at the bottom of the console.
 4. Watch stdout/stderr update live. **STOP** kills the process.
 
@@ -158,7 +158,7 @@ If `--lang` is omitted, AstraEdit uses the saved config, then the environment, t
 
 | Shortcut | Action |
 |----------|--------|
-| `F5` | Run current file |
+| `F5` | Run current Python file |
 | `STOP` | Kill the process |
 | `Clear` | Clear the console |
 | `Enter` in `>>>` | Send a line to stdin (empty line is allowed) |
@@ -238,9 +238,9 @@ pip install prompt_toolkit
 
 **File will not open**
 
-- Binary files are rejected (NUL byte in the first 1 KB).
+- Binary files are rejected (NUL byte in the first 1 KB) and cannot be overwritten via Save.
 - Check permissions.
-- Supported encodings: UTF-8, CP1250, Latin-1, ISO-8859-2. Unknown bytes fall back to UTF-8 with replacement.
+- Tried encodings: UTF-8, CP1250, Latin-1, ISO-8859-2. Unknown bytes fall back to UTF-8 with replacement.
 
 **Console shows no output**
 

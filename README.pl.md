@@ -1,4 +1,4 @@
-# AstraEdit 4.5 — Interactive IDE
+# AstraEdit 4.5 — edytor + konsola Pythona
 
 [![Version](https://img.shields.io/badge/version-4.5-blue)](https://github.com/Maciej-EriAmo/Astraedit)
 [![Python](https://img.shields.io/badge/python-3.7+-green)](https://www.python.org/)
@@ -6,7 +6,7 @@
 
 [English](README.md) | **Polski**
 
-Hybrydowy edytor tekstu / małe IDE w Pythonie. Działa jako **GUI** (Tkinter) albo **TUI** (prompt_toolkit), z interaktywną konsolą: F5 uruchamia bieżący plik, `input()` przyjmuje dane z paska `>>>`, stdout/stderr widać na żywo.
+Hybrydowy edytor tekstu w Pythonie. Działa jako **GUI** (Tkinter) albo **TUI** (prompt_toolkit). W GUI **F5 uruchamia tylko pliki Pythona** (`.py` / `.pyw`): `input()` z paska `>>>`, stdout/stderr na żywo. W TUI F5 schodzi do terminala dla tego samego uruchomienia.
 
 ---
 
@@ -14,9 +14,9 @@ Hybrydowy edytor tekstu / małe IDE w Pythonie. Działa jako **GUI** (Tkinter) a
 
 ### Interfejs
 - **Dwa tryby**: GUI (Tkinter) i TUI (terminal)
-- **Karty**: wiele plików, zamykanie przez ×
+- **Karty (GUI)**: wiele plików; × w tytule karty to pole kliknięcia
 - **Ciemny motyw**: kolory w stylu VS Code
-- **Podział**: edytor + konsola
+- **Podział (GUI)**: edytor + konsola uruchamiania
 - **Polski / angielski**: `--lang pl|en`, Widok → Język, albo `ASTRAEDIT_LANG`
 
 ### Edycja
@@ -24,24 +24,24 @@ Hybrydowy edytor tekstu / małe IDE w Pythonie. Działa jako **GUI** (Tkinter) a
 - Numeracja linii (szerokość rośnie z plikiem)
 - Dopasowanie nawiasów (`()` `[]` `{}` `<>`, limit 2000 znaków)
 - Cofnij / Ponów
-- Auto-zapis co 30 s (pomija pliki tylko do odczytu)
+- Auto-zapis co 30 s, gdy checkbox w Widok jest włączony (pomija pliki tylko do odczytu)
 
 ### Wyszukiwanie
 - Znajdź i zamień, w tym wyrażenia regularne
-- Następne wystąpienie (F3)
+- Znajdź następny (F3) — to nie jest szukanie w trakcie pisania
 - Domyślnie bez rozróżniania wielkości liter
 - Przejdź do linii (Ctrl+G)
 
 ### Uruchamianie
-- Konsola z stdin / stdout / stderr
-- `input()` z paska `>>>` (pusty Enter wysyła nową linię)
-- Przycisk STOP przerywa proces
+- **Tylko Python** (`.py`, `.pyw`). Inne pliki zostają w edytorze; F5 mówi dlaczego
+- Konsola GUI: stdin / stdout / stderr; `>>>` (pusty Enter wysyła nową linię)
+- STOP zabija drzewo procesu (`taskkill /T` na Windows)
 - Kolory: zielony stdin, czerwony stderr, niebieski status
-- F5 uruchamia bieżący plik (najpierw zapis)
+- F5 najpierw zapisuje, potem uruchamia
 
 ### Bezpieczeństwo
-- Wykrywanie plików binarnych (bajt NUL w pierwszym 1 KB)
-- Autodetekcja kodowania: UTF-8, UTF-8-SIG, CP1250, Latin-1, ISO-8859-2
+- Wykrywanie plików binarnych (bajt NUL w pierwszym 1 KB); taki plik nie jest zapisywany z powrotem jako tekst
+- Próby kodowania po kolei: UTF-8, UTF-8-SIG, CP1250, Latin-1, ISO-8859-2 (to nie jest detektor charsetu)
 - Tryb tylko do odczytu bez uprawnień zapisu
 - Pytanie przed zamknięciem niezapisanych kart
 

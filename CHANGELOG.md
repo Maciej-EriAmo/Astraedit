@@ -1,5 +1,17 @@
 # Changelog
 
+## 4.5.2 — Make advertised behavior real
+
+- Auto-save timer always runs; the View checkbox actually turns saving back on.
+- Recent-files menu refreshes after each open (not only after a language change).
+- F5 runs `.py` / `.pyw` only; other files stay in the editor with a clear message.
+- STOP kills the child process tree (`taskkill /T` on Windows, process group elsewhere).
+- TUI will not Save over a binary path (use Save As).
+- Window icon uses `astraedit.ico` when the file is next to the script.
+- Highlighting applies name / operator / punctuation tags, and refreshes after paste.
+- Line numbers follow mouse-wheel scroll.
+- Docs drop “incremental search” and “IDE” claims that the code did not match.
+
 ## 4.5.1 — English UI, docs, and bug fixes
 
 ### Language
