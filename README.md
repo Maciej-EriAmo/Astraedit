@@ -1,444 +1,335 @@
-# 🚀 AstraEdit 4.5 - Interactive IDE
+# AstraEdit 4.5 — Interactive IDE
 
-![Version](https://img.shields.io/badge/version-4.5-blue)
-![Python](https://img.shields.io/badge/python-3.7+-green)
-![License](https://img.shields.io/badge/license-MIT-orange)
+[![Version](https://img.shields.io/badge/version-4.5-blue)](https://github.com/Maciej-EriAmo/Astraedit)
+[![Python](https://img.shields.io/badge/python-3.7+-green)](https://www.python.org/)
+[![License](https://img.shields.io/badge/license-MIT-orange)](LICENSE)
 
-**Hybrydowy edytor tekstu / IDE z pełną obsługą interaktywnej konsoli**
+**English** | [Polski](README.pl.md)
 
-AstraEdit to nowoczesny edytor tekstowy i IDE napisany w Pythonie, oferujący zarówno interfejs graficzny (GUI) jak i konsolowy (TUI). Idealny do szybkiego edytowania kodu, uruchamiania skryptów Pythona z interaktywnym debugowaniem oraz pracy z wieloma plikami jednocześnie.
-
----
-
-## ✨ Główne funkcje
-
-### 🎨 Interfejs
-- **Dual Mode**: GUI (Tkinter) i TUI (prompt_toolkit)
-- **System kart**: Wielokrotne otwarte pliki z przyciskami zamykania (×)
-- **Dark Mode**: Profesjonalny ciemny motyw inspirowany VS Code
-- **Split View**: Edytor + interaktywna konsola w jednym oknie
-
-### 📝 Edycja
-- **Syntax Highlighting**: Kolorowanie składni dla wielu języków (Pygments)
-- **Numeracja linii**: Automatyczna z synchronizacją scroll
-- **Bracket Matching**: Inteligentne podświetlanie par nawiasów (optymalizowane)
-- **Undo/Redo**: Pełna historia zmian
-- **Auto-save**: Automatyczne zapisywanie co 30s
-
-### 🔍 Wyszukiwanie
-- **Find & Replace**: Z obsługą wyrażeń regularnych (Regex)
-- **Incremental Search**: Wyszukiwanie przyrostowe (F3)
-- **Case-insensitive**: Domyślnie ignoruje wielkość liter
-- **Go to Line**: Szybkie przejście do linii (Ctrl+G)
-
-### ▶️ Uruchamianie kodu (NOWOŚĆ!)
-- **Interaktywna konsola**: Pełna obsługa stdin/stdout/stderr
-- **Input handling**: Możliwość wprowadzania danych (`input()`) w czasie rzeczywistym
-- **Proces kontroli**: Przycisk STOP do przerywania wykonania
-- **Kolorowanie outputu**: 
-  - 🟢 Zielony: stdin (twoje wejście)
-  - 🔴 Czerwony: stderr (błędy)
-  - 🔵 Niebieski: info (komunikaty systemu)
-- **Uruchom przez F5**: Natychmiastowe wykonanie aktualnego pliku
-
-### 🛡️ Bezpieczeństwo
-- **Binary file detection**: Automatyczne wykrywanie plików binarnych
-- **Encoding auto-detection**: Inteligentne rozpoznawanie kodowania (UTF-8, CP1250, Latin-1, etc.)
-- **Read-only mode**: Automatyczny tryb tylko do odczytu dla plików bez uprawnień
-- **Unsaved changes protection**: Ostrzeżenie przed zamknięciem niezapisanych plików
-
-### 📂 Zarządzanie plikami
-- **Ostatnio otwierane**: Historia 10 ostatnich plików
-- **Multi-file open**: Otwieranie wielu plików jednocześnie
-- **Drag & drop support**: Przeciąganie plików (w planach)
-- **Tab management**: Menu kontekstowe (prawy przycisk myszy na karcie)
+Hybrid text editor / small IDE written in Python. It runs as a **GUI** (Tkinter) or a **TUI** (prompt_toolkit), with an interactive console so you can run the current file (F5), type into `input()`, and see stdout/stderr live.
 
 ---
 
-## 📋 Wymagania systemowe
+## Features
 
-### Minimalne
-- **Python**: 3.7 lub nowszy
-- **System**: Windows, Linux, macOS
-- **RAM**: 256 MB
-- **Dysk**: 50 MB wolnego miejsca
+### Interface
+- **Dual mode**: GUI (Tkinter) and TUI (terminal)
+- **Tabs**: several files at once, close with ×
+- **Dark theme**: VS Code–style colors
+- **Split view**: editor + interactive console
+- **English / Polish**: `--lang en|pl`, View → Language, or `ASTRAEDIT_LANG`
 
-### Wymagane biblioteki
+### Editing
+- Syntax highlighting (Pygments)
+- Line numbers (width grows with the file)
+- Bracket matching (`()` `[]` `{}` `<>`, 2000-character search cap)
+- Undo / Redo
+- Auto-save every 30 seconds (skips read-only files)
 
-#### Tryb GUI (zalecany)
-```bash
-tkinter  # Zwykle wbudowane w Pythonie
-```
+### Search
+- Find & Replace, including regular expressions
+- Incremental / next match (F3)
+- Case-insensitive by default
+- Go to line (Ctrl+G)
 
-#### Tryb TUI (opcjonalny)
-```bash
-pip install prompt_toolkit
-pip install pyperclip  # Opcjonalnie dla systemowego schowka
-```
+### Run
+- Interactive console with stdin / stdout / stderr
+- Live `input()` from the `>>>` bar (empty Enter sends a newline)
+- STOP button to kill the process
+- Colored output: green stdin, red stderr, blue status
+- F5 runs the current file (saved first)
 
-#### Syntax Highlighting (opcjonalny)
-```bash
-pip install pygments
-```
+### Safety
+- Binary-file detection (NUL in the first 1 KB)
+- Encoding auto-detect: UTF-8, UTF-8-SIG, CP1250, Latin-1, ISO-8859-2
+- Read-only mode when the file is not writable
+- Prompt before closing unsaved tabs
+
+### Files
+- Last 10 recently opened files
+- Open several files at once
+- Tab context menu (right-click): close / close others / close all
 
 ---
 
-## 🚀 Instalacja
+## Requirements
 
-### Szybka instalacja (wszystkie zależności)
+- **Python** 3.7 or newer
+- **OS**: Windows, Linux, macOS
+- GUI uses Tkinter (usually bundled with Python)
+- TUI and highlighting are optional extras
+
 ```bash
-# Klonowanie repozytorium
-git clone https://github.com/Maciej615/AstraEdit.git
-cd AstraEdit
-
-# Instalacja zależności
 pip install -r requirements.txt
 ```
 
-### Plik `requirements.txt`
+`requirements.txt`:
+
 ```
 prompt_toolkit>=3.0.0
 pygments>=2.10.0
 pyperclip>=1.8.2
 ```
 
-### Bez zależności (tylko GUI)
+GUI-only (no extras):
+
 ```bash
-# Python zwykle ma wbudowany tkinter
 python astraedit.py
 ```
 
 ---
 
-## 🎮 Użycie
+## Install
 
-### Podstawowe uruchomienie
 ```bash
-# Uruchom z domyślnym plikiem
+git clone https://github.com/Maciej-EriAmo/Astraedit.git
+cd Astraedit
+pip install -r requirements.txt
+```
+
+---
+
+## Usage
+
+```bash
+# Default file (untitled / notatka, depending on language)
 python astraedit.py
 
-# Otwórz konkretny plik
-python astraedit.py moj_skrypt.py
-
-# Otwórz wiele plików (każdy w osobnej karcie)
+# Open one or more files (each in its own tab)
 python astraedit.py main.py utils.py config.json
 
-# Wymuś tryb GUI
-python astraedit.py --gui moj_plik.py
+# Force GUI or TUI
+python astraedit.py --gui main.py
+python astraedit.py --tui main.py
 
-# Wymuś tryb TUI (terminal)
-python astraedit.py --tui moj_plik.py
+# Interface language (saved in ~/.astraedit_config.json)
+python astraedit.py --lang en
+python astraedit.py --lang pl
 ```
 
-### Przykład interaktywnego użycia
+The old launcher `Astraedit-4.5.py` still works; it just calls `astraedit.py`.
 
-1. **Utwórz plik testowy** `hello.py`:
-```python
-name = input("Jak masz na imię? ")
-print(f"Cześć, {name}!")
+Environment override: `ASTRAEDIT_LANG=en` or `ASTRAEDIT_LANG=pl`.
 
-age = input("Ile masz lat? ")
-print(f"Masz {age} lat - świetnie!")
+If `--lang` is omitted, AstraEdit uses the saved config, then the environment, then the system locale (`pl_*` → Polish, otherwise English).
 
-for i in range(3):
-    print(f"Liczę: {i+1}")
-print("Koniec!")
-```
+### Interactive run
 
-2. **Uruchom AstraEdit**:
+1. Open a Python file that calls `input()`.
+2. Press **F5**.
+3. Type answers in the `>>>` bar at the bottom of the console.
+4. Watch stdout/stderr update live. **STOP** kills the process.
+
+---
+
+## Keyboard shortcuts
+
+### Files and tabs
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl + N` | New tab |
+| `Ctrl + O` | Open file(s) |
+| `Ctrl + S` | Save current tab |
+| `Ctrl + Shift + S` | Save all tabs |
+| `Ctrl + W` | Close tab |
+| `F2` | Save As… |
+| Click `×` | Close that tab |
+
+### Editing
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl + Z` | Undo |
+| `Ctrl + Y` | Redo |
+| `Ctrl + C` / `V` / `X` | Copy / Paste / Cut (system / widget) |
+| `Ctrl + A` | Select all |
+
+### Search
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl + F` | Find (optional Regex) |
+| `F3` | Find next |
+| `Ctrl + H` | Find and Replace |
+| `Ctrl + G` | Go to line |
+
+### Run
+
+| Shortcut | Action |
+|----------|--------|
+| `F5` | Run current file |
+| `STOP` | Kill the process |
+| `Clear` | Clear the console |
+| `Enter` in `>>>` | Send a line to stdin (empty line is allowed) |
+
+### Help
+
+| Shortcut | Action |
+|----------|--------|
+| `F1` | Shortcuts window |
+
+TUI extras: `Ctrl + Q` quit, `Ctrl + S` save, `F2` save as, `Ctrl + F` search, `F5` run (editor suspends to the terminal, then returns).
+
+---
+
+## Modes
+
+### GUI (Tkinter)
+
+Starts automatically when a display is available (`DISPLAY` / `WAYLAND_DISPLAY` / Windows). Full tabs, console, menus, and language switch.
+
+### TUI (terminal)
+
 ```bash
-python astraedit.py hello.py
+python astraedit.py --tui file.py
 ```
 
-3. **Naciśnij F5** aby uruchomić
-
-4. **Wpisz odpowiedzi** w pasku `>>>` na dole konsoli
-
-5. **Zobacz wyniki** w czasie rzeczywistym!
+Useful over SSH or on a machine without a GUI. F5 drops to the terminal, runs the file, then returns after Enter.
 
 ---
 
-## ⌨️ Skróty klawiszowe
+## Language
 
-### 📁 Pliki i karty
-| Skrót | Akcja |
-|-------|-------|
-| `Ctrl + N` | Nowa karta |
-| `Ctrl + O` | Otwórz plik(i) |
-| `Ctrl + S` | Zapisz bieżącą kartę |
-| `Ctrl + Shift + S` | Zapisz wszystkie karty |
-| `Ctrl + W` | Zamknij kartę |
-| `F2` | Zapisz jako... |
-| Klik na `×` | Zamknij kartę (przycisk) |
+| How | Example |
+|-----|---------|
+| CLI | `python astraedit.py --lang en` |
+| Menu | View → Language → English / Polski |
+| Environment | `set ASTRAEDIT_LANG=en` (Windows) / `export ASTRAEDIT_LANG=en` |
+| Config | `language` in `~/.astraedit_config.json` |
 
-### ✏️ Edycja
-| Skrót | Akcja |
-|-------|-------|
-| `Ctrl + Z` | Cofnij |
-| `Ctrl + Y` | Ponów |
-| `Ctrl + C` | Kopiuj |
-| `Ctrl + V` | Wklej |
-| `Ctrl + X` | Wytnij |
-| `Ctrl + A` | Zaznacz wszystko |
-
-### 🔍 Wyszukiwanie
-| Skrót | Akcja |
-|-------|-------|
-| `Ctrl + F` | Znajdź (z opcją Regex) |
-| `F3` | Znajdź następny |
-| `Ctrl + H` | Znajdź i zamień |
-| `Ctrl + G` | Przejdź do linii |
-
-### ▶️ Uruchamianie kodu
-| Skrót | Akcja |
-|-------|-------|
-| `F5` | Uruchom aktualny plik |
-| Przycisk `STOP` | Zatrzymaj proces |
-| Przycisk `Wyczyść` | Wyczyść konsolę |
-| `Enter` w `>>>` | Wyślij input do programu |
-
-### ℹ️ Pomoc
-| Skrót | Akcja |
-|-------|-------|
-| `F1` | Okno pomocy |
+The same keys live in `i18n.py` (`en` and `pl`). Adding another language means a new table plus a `--lang` choice.
 
 ---
 
-## 🎨 Tryby pracy
+## Config
 
-### GUI Mode (Tkinter)
-- **Automatyczna detekcja**: Uruchamia się gdy dostępny jest serwer X/Wayland/Windows
-- **Funkcje**: Pełna obsługa kart, interaktywna konsola, menu kontekstowe
-- **Zalecany dla**: Codziennej pracy, debugowania, projektów wieloplikowych
+Path: `~/.astraedit_config.json`
 
-### TUI Mode (Terminal)
-- **Uruchomienie**: `python astraedit.py --tui plik.py`
-- **Funkcje**: Pełny edytor w terminalu, syntax highlighting, search
-- **Zalecany dla**: Pracy zdalnej (SSH), serwerów bez GUI, minimalistów
-- **Uruchamianie kodu**: Zawiesza edytor i przełącza do konsoli (F5)
-
----
-
-## 🛠️ Zaawansowane funkcje
-
-### Wyrażenia regularne (Regex)
-
-W oknie wyszukiwania zaznacz checkbox **"Użyj wyrażeń regularnych"**:
-```regex
-# Znajdź wszystkie liczby
-\d+
-
-# Znajdź funkcje w Pythonie
-def\s+\w+\s*\(
-
-# Znajdź adresy email
-[\w\.-]+@[\w\.-]+\.\w+
-
-# Znajdź i zamień
-Znajdź: (\w+)_(\w+)
-Zamień: \2_\1
+```json
+{
+  "recent_files": ["C:/proj/main.py"],
+  "language": "en",
+  "autosave": true
+}
 ```
 
-### Auto-save
-
-- **Domyślnie włączone**: Zapisuje co 30 sekund
-- **Wyłączenie**: Menu → Widok → ☐ Auto-zapisywanie
-- **Nie zapisuje**: Plików tylko do odczytu
-- **Wskaźnik**: Kropka (●) przy nazwie karty oznacza niezapisane zmiany
-
-### Menu kontekstowe kart
-
-**Prawy przycisk myszy** na karcie:
-- Zamknij kartę
-- Zamknij inne karty
-- Zamknij wszystko
-
-### Bracket Matching
-
-Automatyczne podświetlanie par nawiasów:
-- Wspiera: `()` `[]` `{}` `<>`
-- Limit przeszukiwania: 2000 znaków (optymalizacja wydajności)
-- Podświetla gdy kursor jest przy nawiasie
-
 ---
 
-## 📊 Obsługiwane języki (Syntax Highlighting)
+## Troubleshooting
 
-Dzięki Pygments, AstraEdit rozpoznaje setki języków:
+**No syntax highlighting**
 
-**Popularne:**
-- Python (.py)
-- JavaScript (.js, .jsx)
-- C/C++ (.c, .cpp, .h)
-- Java (.java)
-- HTML/CSS (.html, .css)
-- Markdown (.md)
-- JSON (.json)
-- XML (.xml)
-- SQL (.sql)
-- Bash/Shell (.sh, .bash)
-
-**I wiele więcej...**
-
----
-
-## 🐛 Rozwiązywanie problemów
-
-### Nie działa Syntax Highlighting
 ```bash
 pip install pygments
 ```
 
-### Nie działa schowek systemowy (TUI)
+**TUI clipboard does not use the system clipboard**
+
 ```bash
 pip install pyperclip
 ```
 
-### Błąd "Brak biblioteki prompt_toolkit"
+**`prompt_toolkit` missing** (TUI)
+
 ```bash
 pip install prompt_toolkit
 ```
 
-### Plik się nie otwiera
-- Sprawdź czy to plik binarny (AstraEdit obsługuje tylko pliki tekstowe)
-- Sprawdź uprawnienia do pliku
-- Sprawdź kodowanie (wspierane: UTF-8, CP1250, Latin-1, ISO-8859-2)
+**File will not open**
 
-### Konsola nie pokazuje outputu
-- Upewnij się że używasz `print()` w kodzie
-- Sprawdź czy proces się uruchomił (status na pasku)
-- Dla programów które wymagają terminala użyj trybu TUI
+- Binary files are rejected (NUL byte in the first 1 KB).
+- Check permissions.
+- Supported encodings: UTF-8, CP1250, Latin-1, ISO-8859-2. Unknown bytes fall back to UTF-8 with replacement.
 
-### Proces się nie zatrzymuje
-- Kliknij przycisk **⬛ STOP**
-- Jeśli to nie pomoże, zamknij AstraEdit (proces zostanie zabity automatycznie)
+**Console shows no output**
 
----
+- Use `print()` (and `python -u` is already passed for `.py` files).
+- Check the status line / STOP state.
+- Programs that need a real TTY should be run from TUI mode (F5).
 
-## 🗺️ Roadmap (Przyszłe funkcje)
+**Process will not die**
 
-### Wersja 5.0
-- [ ] Autocomplete (IntelliSense)
-- [ ] Git integration (status, commit, diff)
-- [ ] Debugger (breakpoints, step-through)
-- [ ] Split panes (podział edytora pionowo/poziomo)
-- [ ] Minimap (mapa kodu jak w VS Code)
-- [ ] Plugins system (rozszerzenia)
-
-### Wersja 4.6
-- [ ] Project explorer (drzewo plików)
-- [ ] Terminal wbudowany (nie tylko konsola)
-- [ ] Snippets (szablony kodu)
-- [ ] Multi-cursor editing
-- [ ] Code folding (zwijanie bloków)
+- Click **STOP**.
+- Closing AstraEdit also kills the child process.
 
 ---
 
-## 🤝 Wkład w projekt
+## Roadmap
 
-Chcesz pomóc? Świetnie! 
+### 5.0
+- Autocomplete
+- Git status / commit / diff
+- Debugger
+- Split panes
+- Minimap
+- Plugin API
 
-### Jak zacząć?
-1. Fork repozytorium
-2. Stwórz branch: `git checkout -b feature/super-funkcja`
-3. Commit zmian: `git commit -m 'Dodaj super funkcję'`
-4. Push: `git push origin feature/super-funkcja`
-5. Otwórz Pull Request
-
-### Czego szukamy?
-- 🐛 Naprawy bugów
-- ✨ Nowe funkcje
-- 📝 Poprawki dokumentacji
-- 🌍 Tłumaczenia (internationalization)
-- 🎨 Ulepszenia UI/UX
-
----
-
-## 📜 Licencja
-
-MIT License
-
-Copyright (c) 2025 Maciej Mazur
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+### 4.6
+- Project explorer
+- Embedded terminal (not only the run console)
+- Snippets
+- Multi-cursor
+- Code folding
 
 ---
 
-## 👨‍💻 Autor
+## Contributing
 
-**Maciej Mazur** (@drwisz)
-- GitHub: [@Maciej615](https://github.com/Maciej615)
+See [CONTRIBUTING.md](CONTRIBUTING.md). Bug fixes, docs, and extra languages are especially welcome.
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE). Copyright (c) 2025 Maciej Mazur.
+
+---
+
+## Author
+
+**Maciej Mazur**
+- GitHub: [@Maciej-EriAmo](https://github.com/Maciej-EriAmo)
 - Medium: [@drwisz](https://medium.com/@drwisz)
-- Email: [maciej.mazur@example.com]
 
 ---
 
-## 🙏 Podziękowania
+## Thanks
 
-- **Anthropic Claude** - za pomoc w tworzeniu tego projektu
-- **Gemini Google** -za pomoc w usuwaniu błędów i pomysły na rozwój
-- **Pygments** - za doskonałą bibliotekę syntax highlighting
-- **prompt_toolkit** - za potężne narzędzia do budowy TUI
-- **Społeczność Python** - za nieustające wsparcie
+- [Pygments](https://pygments.org/) — highlighting
+- [prompt_toolkit](https://github.com/prompt-toolkit/python-prompt-toolkit) — TUI
+- The Python community
 
 ---
 
-## 📸 Screenshots
+## Screenshot (layout)
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  AstraEdit 4.5 [GUI] – main.py                      ☐ ☒ ✕  │
+│  AstraEdit 4.5 [GUI] – main.py                              │
 ├─────────────────────────────────────────────────────────────┤
-│ Plik  Edycja  Uruchom  Widok  Pomoc                        │
+│ File  Edit  Run  View  Help                                 │
 ├─────────────────────────────────────────────────────────────┤
-│ main.py  ×  │  utils.py  ×  │  config.json  ×             │
+│ main.py  ×  │  utils.py  ×  │  config.json  ×               │
 ├────┬────────────────────────────────────────────────────────┤
 │  1 │ def hello_world():                                     │
-│  2 │     name = input("Imię: ")                            │
-│  3 │     print(f"Cześć, {name}!")                          │
+│  2 │     name = input("Name: ")                             │
+│  3 │     print(f"Hello, {name}!")                           │
 │  4 │                                                        │
-│  5 │ if __name__ == "__main__":                            │
-│  6 │     hello_world()                                     │
-│    │                                                        │
+│  5 │ if __name__ == "__main__":                             │
+│  6 │     hello_world()                                      │
 ├────┴────────────────────────────────────────────────────────┤
-│ 📟 Konsola Interaktywna              🗑 Wyczyść  ⬛ STOP   │
+│ Interactive Console                    Clear    STOP        │
 ├─────────────────────────────────────────────────────────────┤
-│ ============================================================│
-│   Uruchamianie: main.py                                    │
-│ ============================================================│
-│                                                             │
-│ Imię: Maciej                                               │
-│ Cześć, Maciej!                                             │
-│                                                             │
+│   Running: main.py                                          │
+│ Name: Ada                                                   │
+│ Hello, Ada!                                                 │
 │ >>> _                                                       │
 ├─────────────────────────────────────────────────────────────┤
-│ Ln 3/6, Col 15 | utf-8 | main.py | F5: Uruchom | F1: Pomoc│
+│ Ln 3/6, Col 15 | utf-8 | main.py | F5: Run | F1: Help       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
----
+If AstraEdit helps you, a star on GitHub is appreciated.
 
-## ⭐ Daj gwiazdkę!
-
-Jeśli AstraEdit okazał się przydatny, zostaw ⭐ na GitHubie!
-
-**Happy Coding! 🚀**
-
----
-
-*"Code is poetry, and every editor is a canvas."* - AstraEdit Philosophy
+*Code is poetry, and every editor is a canvas.*
