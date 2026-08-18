@@ -1,5 +1,32 @@
 # Changelog
 
+## 4.6 — Stability release
+
+Numbering: this is the 4.5.x follow-up. **5.0 stays reserved** for the feature milestone in the README roadmap (autocomplete, Git, debugger).
+
+Data safety and run-process correctness. No new editor features. File layout is unchanged (no modularization).
+
+- `Document` is the source of truth; GUI tab and TUI are `DocumentView`s.
+- Shared find/replace (`SearchPattern`); bad regex is reported and the previous search is kept.
+- `replace_one` replaces the first match inside the selection (no `fullmatch`).
+- Regex on files over 2 MB is windowed; replace-all never truncates the buffer.
+- Highlight: full / deferred / visible-window / off by size; debounce scales with size.
+- Line-number gutter rebuilds only when the line count or width changes.
+- Bracket match uses Pygments tokens and skips strings/comments.
+- Autosave draft can be restored (GUI prompt). `.astraedit/` is gitignored.
+- Config load/save uses concrete exceptions and atomic write.
+
+- Atomic save: write `.tmp` in the same directory, `flush` + `fsync`, then `os.replace`.
+- Strict encoding on save (`errors="strict"`). Failed encode offers UTF-8; the buffer stays dirty.
+- TUI keeps the encoding and newline detected on open (same as GUI).
+- Line endings `LF` / `CRLF` / `CR` are preserved across open/save.
+- Autosave writes `.astraedit/autosave/<name>.autosave` next to the file. Ctrl+S still writes the original.
+- Run uses a process state machine (`IDLE` → `STARTING` → `RUNNING` → `STOPPING`). A second F5 cannot start another worker.
+- The worker holds a local `Popen`; STOP is terminate, then kill if still alive.
+- `<` / `>` are no longer treated as matching brackets.
+- Shared `Document` model for path, text, encoding, newline, and readonly.
+- Tests cover encodings, atomic write, failed replace, autosave, Save As, and subprocess stdout/stderr/stdin/stop/F5-race.
+
 ## 4.5.4 — Thesis-review correctness
 
 - Opening a file no longer marks the tab dirty (`<<Modified>>` after insert).

@@ -1,10 +1,4 @@
-# Python
+.astraedit/
 __pycache__/
-*.py[cod]
-*.egg-info/
-dist/
-build/
-*.egg
-.env
-.vscode/
 *.pyc
+*.pyo

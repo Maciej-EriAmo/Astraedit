@@ -26,7 +26,7 @@ _ALIASES = {
 
 _STRINGS: Dict[str, Dict[str, str]] = {
     "en": {
-        "app_name": "AstraEdit 4.5",
+        "app_name": "AstraEdit 4.6",
         "untitled_file": "untitled.txt",
         "untitled_n": "untitled_{n}.txt",
         "status_ready": "Ready | F5: Run | F1: Help",
@@ -48,6 +48,11 @@ _STRINGS: Dict[str, Dict[str, str]] = {
         "write_error": "Write error {path}: {err}",
         "load_error": "Cannot load file:\n{err}",
         "save_error_title": "Save error",
+        "encode_retry_utf8": "Cannot save this file as {enc} without losing characters.\nSave as UTF-8 instead? (TUI: press Ctrl+S again)",
+        "autosave_title": "Recover draft",
+        "autosave_restore": "A newer auto-save draft exists for {name}. Restore it?",
+        "autosave_hint": "Newer draft: {name} (open in GUI to restore)",
+        "search_limited": "Search limited to 2 MB",
         "readonly_title": "Read-only",
         "readonly_msg": "File opened in read-only mode.\n{path}",
         "error": "Error",
@@ -104,7 +109,7 @@ _STRINGS: Dict[str, Dict[str, str]] = {
         "menu_stop": "Stop process",
         "menu_clear": "Clear console",
         "menu_view": "View",
-        "menu_autosave": "Auto-save (30s)",
+        "menu_autosave": "Auto-save draft (30s)",
         "menu_language": "Language",
         "menu_lang_en": "English",
         "menu_lang_pl": "Polski",
@@ -156,7 +161,7 @@ _STRINGS: Dict[str, Dict[str, str]] = {
             "- Syntax highlighting (Pygments, if installed)\n"
             "- Find & Replace with Regex\n"
             "- Bracket matching\n"
-            "- Auto-save every 30s when enabled\n"
+            "- Draft auto-save every 30s (does not overwrite the original)\n"
             "- Binary files are not overwritten as text\n"
             "- English / Polish interface\n"
             "- Dark theme\n\n"
@@ -172,7 +177,7 @@ _STRINGS: Dict[str, Dict[str, str]] = {
         "cli_lang_saved": "Language set to {lang}",
     },
     "pl": {
-        "app_name": "AstraEdit 4.5",
+        "app_name": "AstraEdit 4.6",
         "untitled_file": "notatka.txt",
         "untitled_n": "notatka_{n}.txt",
         "status_ready": "Gotowy | F5: Uruchom | F1: Pomoc",
@@ -194,6 +199,11 @@ _STRINGS: Dict[str, Dict[str, str]] = {
         "write_error": "Błąd zapisu {path}: {err}",
         "load_error": "Nie można wczytać pliku:\n{err}",
         "save_error_title": "Błąd zapisu",
+        "encode_retry_utf8": "Nie można zapisać tego pliku jako {enc} bez utraty znaków.\nZapisać jako UTF-8? (TUI: naciśnij Ctrl+S ponownie)",
+        "autosave_title": "Odzyskaj szkic",
+        "autosave_restore": "Jest nowszy szkic auto-zapisu dla {name}. Przywrócić?",
+        "autosave_hint": "Nowszy szkic: {name} (przywróć w GUI)",
+        "search_limited": "Szukanie ograniczone do 2 MB",
         "readonly_title": "Tylko odczyt",
         "readonly_msg": "Plik otwarty w trybie tylko do odczytu.\n{path}",
         "error": "Błąd",
@@ -250,7 +260,7 @@ _STRINGS: Dict[str, Dict[str, str]] = {
         "menu_stop": "Zatrzymaj proces",
         "menu_clear": "Wyczyść konsolę",
         "menu_view": "Widok",
-        "menu_autosave": "Auto-zapisywanie (30s)",
+        "menu_autosave": "Szkic auto-zapisu (30s)",
         "menu_language": "Język",
         "menu_lang_en": "English",
         "menu_lang_pl": "Polski",
@@ -302,7 +312,7 @@ _STRINGS: Dict[str, Dict[str, str]] = {
             "- Kolorowanie składni (Pygments, jeśli jest)\n"
             "- Znajdź i zamień z regex\n"
             "- Dopasowanie nawiasów\n"
-            "- Auto-zapis co 30 s, gdy włączony\n"
+            "- Szkic auto-zapisu co 30 s (nie nadpisuje oryginału)\n"
             "- Pliki binarne nie są nadpisywane jako tekst\n"
             "- Interfejs angielski / polski\n"
             "- Ciemny motyw\n\n"

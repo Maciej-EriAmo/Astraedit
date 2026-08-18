@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""AstraEdit 4.5 — hybrid GUI/TUI editor with an interactive console."""
+"""AstraEdit 4.6 — hybrid GUI/TUI editor with an interactive console."""
+
+from __future__ import annotations
 
 import argparse
 import json
@@ -10,17 +12,34 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 from time import time
 
 from i18n import detect_lang, get_lang, set_lang, t
 
-APP_NAME = "AstraEdit 4.5"
+VERSION = "4.6"
+APP_NAME = "AstraEdit " + VERSION
 CONFIG_FILE = pathlib.Path.home() / ".astraedit_config.json"
 PYTHON_SUFFIXES = (".py", ".pyw")
 ICON_FILE = pathlib.Path(__file__).resolve().with_name("astraedit.ico")
 # latin-1 decodes every byte — it must stay last or later codecs never run.
 TEXT_ENCODINGS = ("utf-8", "utf-8-sig", "cp1250", "iso-8859-2", "latin-1")
+HL_FULL_BYTES = 500 * 1024
+HL_DEFER_BYTES = 2 * 1024 * 1024
+HL_OFF_BYTES = 5 * 1024 * 1024
+MAX_REGEX_CHARS = 2 * 1024 * 1024
+BRACKET_SCAN_LIMIT = 2000
+TOKEN_TAG_RULES = (
+    ("Keyword", "Keyword"),
+    ("Comment", "Comment"),
+    ("String", "String"),
+    ("Number", "Number"),
+    ("Builtin", "Name.Builtin"),
+    ("Operator", "Operator"),
+    ("Punctuation", "Punctuation"),
+    ("Name", "Name"),
+)
 
 # ---- Config ----
 def load_config():
@@ -30,7 +49,7 @@ def load_config():
                 data = json.load(f)
                 if isinstance(data, dict):
                     return data
-    except Exception:
+    except (OSError, json.JSONDecodeError, UnicodeError):
         pass
     return {}
 
@@ -39,9 +58,12 @@ def save_config(updates):
     data = load_config()
     data.update(updates)
     try:
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-    except Exception as e:
+        write_text_file(
+            str(CONFIG_FILE),
+            json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+    except OSError as e:
         print_status(t("write_error", path=str(CONFIG_FILE), err=e), "error")
 
 
@@ -68,77 +90,451 @@ def next_untitled_name(open_paths, exists=os.path.exists):
     return t("untitled_n", n=n)
 
 
-def terminate_process_tree(proc):
-    """Kill the run child and its descendants. Does not touch this editor."""
+PROC_IDLE = "idle"
+PROC_STARTING = "starting"
+PROC_RUNNING = "running"
+PROC_STOPPING = "stopping"
+STOP_TIMEOUT_SEC = 1.5
+NEWLINE_LF = "\n"
+NEWLINE_CRLF = "\r\n"
+NEWLINE_CR = "\r"
+
+
+def _taskkill(pid, force=False):
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    cmd = ["taskkill", "/T", "/PID", str(pid)]
+    if force:
+        cmd.insert(1, "/F")
+    subprocess.run(cmd, capture_output=True, check=False, creationflags=flags)
+
+
+def terminate_process_tree(proc, timeout=STOP_TIMEOUT_SEC):
+    """SIGTERM / taskkill, then SIGKILL / taskkill /F if the tree is still alive."""
     if proc is None or proc.poll() is not None:
         return
     if os.name == "nt":
         try:
-            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                capture_output=True,
-                check=False,
-                creationflags=flags,
-            )
-            return
+            _taskkill(proc.pid, force=False)
         except Exception:
-            pass
-    else:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
         try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            proc.wait(timeout=timeout)
             return
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            _taskkill(proc.pid, force=True)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        return
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except Exception:
+        try:
+            proc.terminate()
         except Exception:
             pass
     try:
-        proc.kill()
-    except Exception:
+        proc.wait(timeout=timeout)
+        return
+    except subprocess.TimeoutExpired:
         pass
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+class ProcessManager:
+    """IDLE → STARTING → RUNNING → STOPPING → IDLE. Blocks a second F5."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.state = PROC_IDLE
+        self.proc = None
+
+    def is_busy(self):
+        with self._lock:
+            return self.state != PROC_IDLE
+
+    def try_start(self):
+        with self._lock:
+            if self.state != PROC_IDLE:
+                return False
+            self.state = PROC_STARTING
+            return True
+
+    def attach(self, proc):
+        with self._lock:
+            self.proc = proc
+            if self.state == PROC_STOPPING:
+                return "stop"
+            if self.state == PROC_STARTING:
+                self.state = PROC_RUNNING
+            return "run"
+
+    def request_stop(self):
+        with self._lock:
+            if self.state not in (PROC_STARTING, PROC_RUNNING):
+                return None
+            self.state = PROC_STOPPING
+            return self.proc
+
+    def running_proc(self):
+        with self._lock:
+            if self.state == PROC_RUNNING and self.proc is not None and self.proc.poll() is None:
+                return self.proc
+            return None
+
+    def finish(self):
+        with self._lock:
+            self.proc = None
+            self.state = PROC_IDLE
+
+
+def popen_script(file_path):
+    """Start a Python file. Callers keep the returned Popen, not a shared slot."""
+    popen_kw = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "stdin": subprocess.PIPE,
+        "text": True,
+        "bufsize": 0,
+        "cwd": str(pathlib.Path(file_path).parent),
+        "encoding": "utf-8",
+        "errors": "replace",
+    }
+    if os.name == "nt":
+        popen_kw["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        popen_kw["start_new_session"] = True
+    return subprocess.Popen([sys.executable, "-u", str(file_path)], **popen_kw)
 
 
 # ---- Shared I/O ----
+def is_binary_bytes(raw):
+    return b"\0" in raw[:1024]
+
+
 def is_binary_file(filepath):
     try:
         with open(filepath, "rb") as f:
-            chunk = f.read(1024)
-            return b"\0" in chunk
-    except Exception:
+            return is_binary_bytes(f.read(1024))
+    except OSError:
         return False
 
 
+def normalize_codec(encoding):
+    if encoding and encoding.isascii() and " " not in encoding:
+        return encoding
+    return "utf-8"
+
+
+def detect_newline(raw):
+    """First line ending in the file; default LF. Does not rewrite mixed files."""
+    i = 0
+    n = len(raw)
+    while i < n:
+        if raw[i] == 13:
+            if i + 1 < n and raw[i + 1] == 10:
+                return NEWLINE_CRLF
+            return NEWLINE_CR
+        if raw[i] == 10:
+            return NEWLINE_LF
+        i += 1
+    return NEWLINE_LF
+
+
+def to_editor_newlines(text, newline):
+    if newline == NEWLINE_CRLF:
+        return text.replace("\r\n", "\n")
+    if newline == NEWLINE_CR:
+        return text.replace("\r", "\n")
+    return text
+
+
+def from_editor_newlines(text, newline):
+    if newline == NEWLINE_LF:
+        return text
+    return text.replace("\n", newline)
+
+
+def encodings_for(raw):
+    if raw.startswith(b"\xef\xbb\xbf"):
+        rest = tuple(enc for enc in TEXT_ENCODINGS if enc != "utf-8-sig")
+        return ("utf-8-sig",) + rest
+    return TEXT_ENCODINGS
+
+
 def read_text_file_smart(path):
-    if is_binary_file(path):
+    """Return (text, encoding, newline). Editor text always uses \\n."""
+    with open(path, "rb") as f:
+        raw = f.read()
+    if is_binary_bytes(raw):
         raise ValueError(t("binary_error"))
 
-    for enc in TEXT_ENCODINGS:
+    last_err = None
+    for enc in encodings_for(raw):
         try:
-            with open(path, "r", encoding=enc) as f:
-                return f.read(), enc
-        except (UnicodeDecodeError, LookupError):
+            text = raw.decode(enc)
+        except (UnicodeDecodeError, LookupError) as err:
+            last_err = err
             continue
+        newline = detect_newline(raw)
+        return to_editor_newlines(text, newline), enc, newline
+    if last_err is not None:
+        raise last_err
+    raise ValueError(t("read_error", path=path, err="decode"))
+
+
+def write_text_file(path, text, encoding="utf-8", newline=NEWLINE_LF):
+    """Atomic save: temp file → flush → fsync → os.replace. Strict encoding."""
+    codec = normalize_codec(encoding)
+    payload = from_editor_newlines(text, newline)
+    data = payload.encode(codec)
+    dest = pathlib.Path(path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=".%s." % dest.name, suffix=".tmp", dir=str(dest.parent))
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            # Always return a real codec name so later saves do not fail.
-            return f.read(), "utf-8"
-    except Exception as e:
-        print_status(t("read_error", path=path, err=e), "error")
-        return "", "utf-8"
-
-
-def read_text_file(path):
-    content, _ = read_text_file_smart(path)
-    return content
-
-
-def write_text_file(path, text, encoding="utf-8"):
-    codec = encoding if encoding and encoding.isascii() and " " not in encoding else "utf-8"
-    try:
-        pathlib.Path(path).parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding=codec, errors="replace") as f:
-            f.write(text)
-    except Exception as e:
-        print_status(t("write_error", path=path, err=e), "error")
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, dest)
+    except Exception as err:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        print_status(t("write_error", path=path, err=err), "error")
         raise
+
+
+def resolve_doc_path(path):
+    return str(pathlib.Path(path).expanduser().resolve())
+
+
+def autosave_path_for(file_path):
+    parent = pathlib.Path(file_path)
+    return parent.parent / ".astraedit" / "autosave" / (parent.name + ".autosave")
+
+
+def newer_autosave(file_path):
+    """Return draft path if it exists and is newer than the original (or original is missing)."""
+    draft = autosave_path_for(file_path)
+    if not draft.is_file():
+        return None
+    src = pathlib.Path(file_path)
+    if src.is_file() and draft.stat().st_mtime <= src.stat().st_mtime:
+        return None
+    return draft
+
+
+def highlight_policy(nbytes):
+    """Return (mode, debounce_seconds). mode: full | visible | off."""
+    if nbytes >= HL_OFF_BYTES:
+        return "off", 2.5
+    if nbytes >= HL_DEFER_BYTES:
+        return "visible", 1.5
+    if nbytes >= HL_FULL_BYTES:
+        return "full", 1.2
+    return "full", 0.5
+
+
+def token_tag(token):
+    name = str(token)
+    for needle, tag in TOKEN_TAG_RULES:
+        if needle in name:
+            return tag
+    return None
+
+
+def token_is_ignorable(token):
+    name = str(token)
+    return "String" in name or "Comment" in name
+
+
+def tk_index_to_offset(text, index):
+    line_s, col_s = index.split(".")
+    line = int(line_s)
+    col = int(col_s)
+    if line <= 1:
+        return min(col, len(text))
+    start = 0
+    for _ in range(line - 1):
+        nxt = text.find("\n", start)
+        if nxt < 0:
+            return len(text)
+        start = nxt + 1
+    return min(start + col, len(text))
+
+
+def offset_to_tk_index(text, offset):
+    offset = max(0, min(offset, len(text)))
+    chunk = text[:offset]
+    lines = chunk.count("\n")
+    if lines == 0:
+        return "1.%d" % offset
+    return "%d.%d" % (1 + lines, offset - chunk.rfind("\n") - 1)
+
+
+def code_char_mask(text, lexer, around, radius=BRACKET_SCAN_LIMIT):
+    """True where a character is code (not a string or comment)."""
+    n = len(text)
+    mask = [True] * n
+    if lexer is None or n == 0:
+        return mask
+    lo = max(0, around - radius)
+    hi = min(n, around + radius)
+    pos = lo
+    try:
+        for tok, val in lexer.get_tokens(text[lo:hi]):
+            if token_is_ignorable(tok):
+                end = min(pos + len(val), hi)
+                for i in range(pos, end):
+                    mask[i] = False
+            pos += len(val)
+            if pos >= hi:
+                break
+    except (ValueError, TypeError):
+        pass
+    return mask
+
+
+def find_matching_bracket(text, start, direction, self_ch, other_ch, mask, max_chars=BRACKET_SCAN_LIMIT):
+    count = 1
+    i = start + direction
+    steps = 0
+    n = len(text)
+    while 0 <= i < n and steps < max_chars:
+        steps += 1
+        if mask[i]:
+            ch = text[i]
+            if ch == self_ch:
+                count += 1
+            elif ch == other_ch:
+                count -= 1
+                if count == 0:
+                    return i
+        i += direction
+    return None
+
+
+class SearchPattern:
+    """Unified literal / regex find-replace."""
+
+    def __init__(self, pattern, use_regex):
+        self.pattern = pattern
+        self.use_regex = bool(use_regex)
+        try:
+            if self.use_regex:
+                self.compiled = re.compile(pattern, re.IGNORECASE)
+            else:
+                self.compiled = re.compile(re.escape(pattern), re.IGNORECASE)
+        except re.error as err:
+            raise ValueError(str(err)) from err
+
+    def find(self, text, start=0):
+        return self.compiled.search(text, start)
+
+    def replace_in(self, text, repl, count=0):
+        return self.compiled.subn(repl, text, count=count)
+
+
+def search_window(text, start, use_regex):
+    """Limit regex scans on huge buffers. Returns (slice, offset, limited)."""
+    if not use_regex or len(text) <= MAX_REGEX_CHARS:
+        return text[start:], start, False
+    return text[start : start + MAX_REGEX_CHARS], start, True
+
+
+class Document:
+    """Editor buffer. GUI tabs and the TUI are views of this object."""
+
+    def __init__(self, path, text="", encoding="utf-8", newline=NEWLINE_LF, readonly=False):
+        self.path = resolve_doc_path(path)
+        self.text = text
+        self.encoding = encoding
+        self.newline = newline
+        self.readonly = readonly
+        self.modified = False
+
+    @classmethod
+    def blank(cls, path):
+        return cls(path)
+
+    @classmethod
+    def open(cls, path):
+        text, encoding, newline = read_text_file_smart(path)
+        readonly = not os.access(path, os.W_OK)
+        return cls(path, text, encoding, newline, readonly=readonly)
+
+    def save(self, text, encoding=None, path=None):
+        """Atomic write. On success updates this document and clears modified."""
+        dest = resolve_doc_path(path) if path else self.path
+        codec = encoding or self.encoding
+        write_text_file(dest, text, codec, self.newline)
+        self.path = dest
+        self.text = text
+        self.encoding = codec
+        self.modified = False
+        self.readonly = False
+
+    def write(self, text=None, encoding=None):
+        self.save(self.text if text is None else text, encoding=encoding)
+
+
+class DocumentView:
+    """View mixin: path, encoding, newline, modified, and readonly live on self.doc."""
+
+    @property
+    def file_path(self):
+        return self.doc.path
+
+    @file_path.setter
+    def file_path(self, value):
+        self.doc.path = resolve_doc_path(value)
+
+    @property
+    def file_encoding(self):
+        return self.doc.encoding
+
+    @file_encoding.setter
+    def file_encoding(self, value):
+        self.doc.encoding = normalize_codec(value)
+
+    @property
+    def file_newline(self):
+        return self.doc.newline
+
+    @file_newline.setter
+    def file_newline(self, value):
+        self.doc.newline = value
+
+    @property
+    def is_modified(self):
+        return self.doc.modified
+
+    @is_modified.setter
+    def is_modified(self, value):
+        self.doc.modified = bool(value)
+
+    @property
+    def is_readonly(self):
+        return self.doc.readonly
+
+    @is_readonly.setter
+    def is_readonly(self, value):
+        self.doc.readonly = bool(value)
 
 
 # ---- Pygments ----
@@ -195,11 +591,13 @@ except ImportError:
     tui_clipboard = None
 
 
-class AstraEditTUI:
+class AstraEditTUI(DocumentView):
+    """Terminal view of a Document."""
+
     def __init__(self, file_path):
-        self.file_path = str(pathlib.Path(file_path).expanduser().resolve())
-        self.is_modified = False
+        self.doc = Document.blank(file_path)
         self.binary_blocked = False
+        self._utf8_retry = False
 
         self.search_field = SearchToolbar()
         lexer = None
@@ -214,7 +612,13 @@ class AstraEditTUI:
                 initial_text = t("tui_binary")
                 self.binary_blocked = True
             else:
-                initial_text = read_text_file(self.file_path)
+                self.doc = Document.open(self.file_path)
+                initial_text = self.doc.text
+                draft = newer_autosave(self.file_path)
+                if draft is not None:
+                    self.status_pending = t(
+                        "autosave_hint", name=pathlib.Path(draft).name
+                    )
 
         self.editor = TextArea(
             text=initial_text,
@@ -229,7 +633,7 @@ class AstraEditTUI:
         self.editor.buffer.on_text_changed += lambda _: self.on_change()
         self.frame = Frame(self.editor, title=self.get_title())
 
-        self.status_text = t("status_tui")
+        self.status_text = getattr(self, "status_pending", None) or t("status_tui")
         self.footer = Window(
             height=1,
             content=FormattedTextControl(self.get_status_bar),
@@ -302,17 +706,25 @@ class AstraEditTUI:
         save_config({"language": get_lang()})
         self.apply_language()
 
-    def save_current(self):
+    def save_current(self, encoding=None):
         if self.binary_blocked:
             self.status_text = t("binary_save_blocked")
             return False
+        if encoding is None and self._utf8_retry:
+            encoding = "utf-8"
+            self._utf8_retry = False
+        codec = encoding or self.file_encoding
         try:
-            write_text_file(self.file_path, self.editor.text)
-            self.is_modified = False
+            self.doc.save(self.editor.text, encoding=codec)
+            self._utf8_retry = False
             self.frame.title = self.get_title()
             self.status_text = t("status_tui")
             return True
-        except Exception as e:
+        except UnicodeEncodeError:
+            self._utf8_retry = True
+            self.status_text = t("encode_retry_utf8", enc=codec)
+            return False
+        except OSError as e:
             self.status_text = t("write_error", path=self.file_path, err=e)
             return False
 
@@ -353,14 +765,17 @@ class AstraEditTUI:
             path = tf.text.strip()
             if not path:
                 return
+            dest = resolve_doc_path(path)
             try:
-                write_text_file(path, self.editor.text)
-            except Exception as e:
-                self.status_text = t("write_error", path=path, err=e)
+                self.doc.save(self.editor.text, path=dest)
+            except UnicodeEncodeError:
+                self._utf8_retry = True
+                self.status_text = t("encode_retry_utf8", enc=self.file_encoding)
                 return
-            self.file_path = str(pathlib.Path(path).expanduser().resolve())
+            except OSError as e:
+                self.status_text = t("write_error", path=dest, err=e)
+                return
             self.binary_blocked = False
-            self.is_modified = False
             self.frame.title = self.get_title()
             self._pop_float(app)
 
@@ -434,16 +849,15 @@ except ImportError:
     tk = None
 
 
-class EditorTab:
-    """A single editor tab."""
+class EditorTab(DocumentView):
+    """GUI view of a Document (widgets only)."""
 
     def __init__(self, parent, file_path, app):
         self.app = app
-        self.file_path = str(pathlib.Path(file_path).expanduser().resolve())
-        self.is_modified = False
-        self.file_encoding = "utf-8"
-        self.is_readonly = False
+        self.doc = Document.blank(file_path)
         self.last_update = 0
+        self._ln_count = -1
+        self._ln_width = 0
 
         self.frame = tk.Frame(parent, bg=app.bg_color)
 
@@ -511,31 +925,45 @@ class EditorTab:
         self.load_file()
 
     def load_file(self):
-        if os.path.exists(self.file_path):
+        path = self.file_path
+        if os.path.exists(path):
             try:
-                if is_binary_file(self.file_path):
-                    messagebox.showerror(t("error"), t("binary_open", path=self.file_path))
+                if is_binary_file(path):
+                    messagebox.showerror(t("error"), t("binary_open", path=path))
                     return False
 
-                content, self.file_encoding = read_text_file_smart(self.file_path)
-                self.text_area.insert("1.0", content)
-                self.update_syntax_highlighting()
-                self.text_area.edit_modified(False)
-                self.is_modified = False
+                draft = newer_autosave(path)
+                restored = False
+                if draft is not None and messagebox.askyesno(
+                    t("autosave_title"),
+                    t("autosave_restore", name=pathlib.Path(path).name),
+                ):
+                    self.doc = Document.open(str(draft))
+                    self.doc.path = resolve_doc_path(path)
+                    self.doc.modified = True
+                    restored = True
+                else:
+                    self.doc = Document.open(path)
 
-                if not os.access(self.file_path, os.W_OK):
-                    self.is_readonly = True
+                self.text_area.insert("1.0", self.doc.text)
+                self.update_syntax_highlighting(force=True)
+                self.text_area.edit_modified(False)
+                if not restored:
+                    self.is_modified = False
+
+                if self.doc.readonly:
                     self.text_area.config(state="disabled")
                     messagebox.showwarning(
-                        t("readonly_title"), t("readonly_msg", path=self.file_path)
+                        t("readonly_title"), t("readonly_msg", path=path)
                     )
-            except Exception as e:
+            except (OSError, UnicodeError, ValueError) as e:
                 messagebox.showerror(t("error"), t("load_error", err=e))
                 return False
 
         self.update_line_numbers()
         self.text_area.edit_modified(False)
-        self.is_modified = False
+        if not self.doc.modified:
+            self.is_modified = False
         return True
 
     def on_scrollbar(self, *args):
@@ -549,13 +977,18 @@ class EditorTab:
                 self.app.update_tab_title(self)
             self.text_area.edit_modified(False)
 
+    def _approx_size(self):
+        lines = int(self.text_area.index("end-1c").split(".")[0])
+        return lines * 64
+
     def on_key_release_combined(self, event=None):
         self.update_line_numbers()
         self.app.update_cursor_position()
         self.highlight_matching_bracket()
 
         now = time()
-        if now - self.last_update > 0.5:
+        _mode, delay = highlight_policy(self._approx_size())
+        if now - self.last_update > delay:
             self.update_syntax_highlighting()
             self.last_update = now
 
@@ -569,154 +1002,129 @@ class EditorTab:
         self.app.update_cursor_position()
 
     def update_line_numbers(self):
-        self.line_numbers.config(state="normal")
-        self.line_numbers.delete("1.0", "end")
-
-        end_index = self.text_area.index("end-1c")
-        line_count = int(end_index.split(".")[0])
+        line_count = int(self.text_area.index("end-1c").split(".")[0])
         width = max(4, len(str(line_count)))
-        self.line_numbers.config(width=width)
-        nums = "\n".join(str(i) for i in range(1, line_count + 1))
-
-        self.line_numbers.insert("1.0", nums)
-        self.line_numbers.config(state="disabled")
-
+        if line_count != self._ln_count or width != self._ln_width:
+            self._ln_count = line_count
+            self._ln_width = width
+            self.line_numbers.config(state="normal", width=width)
+            self.line_numbers.delete("1.0", "end")
+            self.line_numbers.insert("1.0", "\n".join(str(i) for i in range(1, line_count + 1)))
+            self.line_numbers.config(state="disabled")
         try:
-            first_visible = self.text_area.yview()[0]
-            self.line_numbers.yview_moveto(first_visible)
-        except Exception:
+            self.line_numbers.yview_moveto(self.text_area.yview()[0])
+        except tk.TclError:
             pass
 
     def highlight_matching_bracket(self):
         self.text_area.tag_remove("matching_bracket", "1.0", tk.END)
-
-        cursor_pos = self.text_area.index(tk.INSERT)
-
-        try:
-            prev_pos = f"{cursor_pos}-1c"
-            char_before = self.text_area.get(prev_pos, cursor_pos)
-        except Exception:
-            char_before = ""
-
-        try:
-            char_at = self.text_area.get(cursor_pos, f"{cursor_pos}+1c")
-        except Exception:
-            char_at = ""
-
-        brackets = {"(": ")", "[": "]", "{": "}", "<": ">"}
-        rev_brackets = {v: k for k, v in brackets.items()}
-        max_chars = 2000
-
-        if char_before in rev_brackets:
-            self.find_opening_bracket(prev_pos, char_before, rev_brackets[char_before], max_chars)
-        elif char_at in brackets:
-            self.find_closing_bracket(cursor_pos, char_at, brackets[char_at], max_chars)
-
-    def find_closing_bracket(self, start, open_br, close_br, max_chars):
-        count = 1
-        pos = start
-        chars_searched = 0
-
-        while chars_searched < max_chars:
-            chars_searched += 1
-            pos = f"{pos}+1c"
-            if self.text_area.compare(pos, ">=", tk.END):
-                break
-            ch = self.text_area.get(pos, f"{pos}+1c")
-            if ch == open_br:
-                count += 1
-            elif ch == close_br:
-                count -= 1
-                if count == 0:
-                    self.text_area.tag_add("matching_bracket", start, f"{start}+1c")
-                    self.text_area.tag_add("matching_bracket", pos, f"{pos}+1c")
-                    break
-
-    def find_opening_bracket(self, start, close_br, open_br, max_chars):
-        count = 1
-        pos = start
-        chars_searched = 0
-
-        while chars_searched < max_chars:
-            chars_searched += 1
-            if self.text_area.compare(pos, "<=", "1.0"):
-                break
-            pos = f"{pos}-1c"
-            ch = self.text_area.get(pos, f"{pos}+1c")
-            if ch == close_br:
-                count += 1
-            elif ch == open_br:
-                count -= 1
-                if count == 0:
-                    self.text_area.tag_add("matching_bracket", pos, f"{pos}+1c")
-                    self.text_area.tag_add("matching_bracket", start, f"{start}+1c")
-                    break
-
-    def update_syntax_highlighting(self):
-        if not get_lexer_for_filename:
-            return
-
         content = self.text_area.get("1.0", "end-1c")
+        if not content:
+            return
+        cursor = self.text_area.index(tk.INSERT)
+        offset = tk_index_to_offset(content, cursor)
+        pairs = {"(": ")", "[": "]", "{": "}"}
+        rev = {v: k for k, v in pairs.items()}
+        if offset > 0 and content[offset - 1] in rev:
+            start = offset - 1
+            self_ch = content[start]
+            other = rev[self_ch]
+            direction = -1
+        elif offset < len(content) and content[offset] in pairs:
+            start = offset
+            self_ch = content[start]
+            other = pairs[self_ch]
+            direction = 1
+        else:
+            return
+        lexer = get_best_lexer(self.file_path) if get_lexer_for_filename else None
+        mask = code_char_mask(content, lexer, start)
+        if not mask[start]:
+            return
+        match = find_matching_bracket(content, start, direction, self_ch, other, mask)
+        if match is None:
+            return
+        a = offset_to_tk_index(content, start)
+        b = offset_to_tk_index(content, match)
+        self.text_area.tag_add("matching_bracket", a, "%s+1c" % a)
+        self.text_area.tag_add("matching_bracket", b, "%s+1c" % b)
 
+    def _clear_syntax_tags(self, start="1.0", end="end"):
         for tag in self.text_area.tag_names():
             if tag not in ("sel", "matching_bracket"):
-                self.text_area.tag_remove(tag, "1.0", "end")
+                self.text_area.tag_remove(tag, start, end)
 
+    def _visible_lines(self):
+        first = int(self.text_area.index("@0,0").split(".")[0])
+        last = int(self.text_area.index("@0,%d" % max(1, self.text_area.winfo_height())).split(".")[0])
+        return first, last
+
+    def _apply_tokens(self, lexer, content, line_idx, col_idx):
+        for token, text in lexer.get_tokens(content):
+            tag_name = token_tag(token)
+            lines = text.split("\n")
+            start_idx = "%d.%d" % (line_idx, col_idx)
+            if len(lines) > 1:
+                line_idx += len(lines) - 1
+                col_idx = len(lines[-1])
+            else:
+                col_idx += len(text)
+            end_idx = "%d.%d" % (line_idx, col_idx)
+            if tag_name:
+                self.text_area.tag_add(tag_name, start_idx, end_idx)
+        return line_idx, col_idx
+
+    def update_syntax_highlighting(self, force=False):
+        if not get_lexer_for_filename:
+            return
+        content = self.text_area.get("1.0", "end-1c")
+        nbytes = len(content.encode("utf-8", errors="replace"))
+        mode, _delay = highlight_policy(nbytes)
+        if mode == "off":
+            self._clear_syntax_tags()
+            return
         lexer = get_best_lexer(self.file_path)
         if lexer is None:
             return
-
         try:
-            line_idx = 1
-            col_idx = 0
-
-            for token, text in lexer.get_tokens(content):
-                str_token = str(token)
-                tag_name = None
-
-                if "Keyword" in str_token:
-                    tag_name = "Keyword"
-                elif "Comment" in str_token:
-                    tag_name = "Comment"
-                elif "String" in str_token:
-                    tag_name = "String"
-                elif "Number" in str_token:
-                    tag_name = "Number"
-                elif "Builtin" in str_token:
-                    tag_name = "Name.Builtin"
-                elif "Operator" in str_token:
-                    tag_name = "Operator"
-                elif "Punctuation" in str_token:
-                    tag_name = "Punctuation"
-                elif "Name" in str_token:
-                    tag_name = "Name"
-
-                lines = text.split("\n")
-                start_idx = f"{line_idx}.{col_idx}"
-                if len(lines) > 1:
-                    line_idx += len(lines) - 1
-                    col_idx = len(lines[-1])
-                else:
-                    col_idx += len(text)
-                end_idx = f"{line_idx}.{col_idx}"
-
-                if tag_name:
-                    self.text_area.tag_add(tag_name, start_idx, end_idx)
-        except Exception:
+            if mode == "visible":
+                first, last = self._visible_lines()
+                first = max(1, first - 8)
+                last = last + 8
+                start = "%d.0" % first
+                end = "%d.end" % last
+                fragment = self.text_area.get(start, end)
+                self._clear_syntax_tags(start, end)
+                self._apply_tokens(lexer, fragment, first, 0)
+            else:
+                self._clear_syntax_tags()
+                self._apply_tokens(lexer, content, 1, 0)
+        except (ValueError, TypeError):
             pass
 
-    def save(self):
-        if self.is_readonly:
+    def save(self, path=None, encoding=None):
+        if self.is_readonly and path is None:
             return False
+        dest = resolve_doc_path(path) if path else self.file_path
+        codec = encoding or self.file_encoding
+        content = self.text_area.get("1.0", "end-1c")
         try:
-            content = self.text_area.get("1.0", "end-1c")
-            write_text_file(self.file_path, content, self.file_encoding)
-            self.is_modified = False
-            self.app.update_tab_title(self)
-            return True
-        except Exception as e:
+            self.doc.save(content, encoding=codec, path=dest)
+        except UnicodeEncodeError:
+            if not messagebox.askyesno(
+                t("save_error_title"), t("encode_retry_utf8", enc=codec)
+            ):
+                return False
+            try:
+                self.doc.save(content, encoding="utf-8", path=dest)
+            except OSError as e:
+                messagebox.showerror(t("save_error_title"), str(e))
+                return False
+        except OSError as e:
             messagebox.showerror(t("save_error_title"), str(e))
             return False
+        self.app.update_tab_title(self)
+        return True
 
     def get_short_name(self):
         return pathlib.Path(self.file_path).name
@@ -755,7 +1163,7 @@ class AstraEditGUI:
         self.use_regex = False
 
         self._tabs = []
-        self.process = None
+        self.runner = ProcessManager()
         self.msg_queue = queue.Queue()
         self.recent_menu = None
 
@@ -1029,15 +1437,17 @@ class AstraEditGUI:
         if not tab:
             return
 
-        if self.process and self.process.poll() is None:
+        if not self.runner.try_start():
             messagebox.showinfo(t("info"), t("process_running"))
             return
 
         if not is_python_source(tab.file_path):
+            self.runner.finish()
             messagebox.showinfo(t("info"), t("run_only_python"))
             return
 
         if not tab.save():
+            self.runner.finish()
             return
 
         file_path = tab.file_path
@@ -1055,36 +1465,22 @@ class AstraEditGUI:
         threading.Thread(target=self._run_subprocess, args=(file_path,), daemon=True).start()
 
     def _run_subprocess(self, file_path):
+        proc = None
         try:
-            cmd = [sys.executable, "-u", file_path]
-
-            popen_kw = {
-                "stdout": subprocess.PIPE,
-                "stderr": subprocess.PIPE,
-                "stdin": subprocess.PIPE,
-                "text": True,
-                "bufsize": 0,
-                "cwd": str(pathlib.Path(file_path).parent),
-                "encoding": "utf-8",
-                "errors": "replace",
-            }
-            if os.name == "nt":
-                popen_kw["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            proc = popen_script(file_path)
+            action = self.runner.attach(proc)
+            if action == "stop":
+                terminate_process_tree(proc)
             else:
-                popen_kw["start_new_session"] = True
+                threading.Thread(
+                    target=self._reader, args=(proc.stdout, None), daemon=True
+                ).start()
+                threading.Thread(
+                    target=self._reader, args=(proc.stderr, "stderr"), daemon=True
+                ).start()
+            proc.wait()
 
-            self.process = subprocess.Popen(cmd, **popen_kw)
-
-            threading.Thread(
-                target=self._reader, args=(self.process.stdout, None), daemon=True
-            ).start()
-            threading.Thread(
-                target=self._reader, args=(self.process.stderr, "stderr"), daemon=True
-            ).start()
-
-            self.process.wait()
-
-            code = self.process.returncode if self.process else "?"
+            code = proc.returncode if proc else "?"
             self.msg_queue.put(("text", f"\n{'=' * 60}\n", "info"))
             self.msg_queue.put(("text", f"  {t('finished', code=code)}\n", "info"))
             self.msg_queue.put(("text", f"{'=' * 60}\n", "info"))
@@ -1123,7 +1519,7 @@ class AstraEditGUI:
                     self.log_to_console(content, tag)
                 elif msg_type == "status" and content == "stopped":
                     self.stop_btn.config(state="disabled", bg="#8b0000")
-                    self.process = None
+                    self.runner.finish()
         except queue.Empty:
             pass
 
@@ -1139,25 +1535,26 @@ class AstraEditGUI:
         text = self.input_entry.get()
         self.input_entry.delete(0, tk.END)
 
-        running = self.process and self.process.poll() is None
-        if not running:
+        proc = self.runner.running_proc()
+        if not proc:
             if text:
                 self.log_to_console(f"⚠ {t('process_not_running')}\n", "stderr")
             return
 
         try:
             self.log_to_console(f"{text}\n", "stdin")
-            self.process.stdin.write(text + "\n")
-            self.process.stdin.flush()
+            proc.stdin.write(text + "\n")
+            proc.stdin.flush()
         except Exception as e:
             self.log_to_console(f"❌ {t('stdin_error', err=e)}\n", "stderr")
 
     def stop_process(self):
-        if self.process and self.process.poll() is None:
-            terminate_process_tree(self.process)
-            self.log_to_console(f"\n⚠ {t('process_stopped')}\n", "stderr")
-            self.stop_btn.config(state="disabled", bg="#8b0000")
-            self.process = None
+        proc = self.runner.request_stop()
+        if proc is None:
+            return
+        terminate_process_tree(proc)
+        self.log_to_console(f"\n⚠ {t('process_stopped')}\n", "stderr")
+        self.stop_btn.config(state="disabled", bg="#8b0000")
 
     def clear_console(self):
         self.console_area.config(state="normal")
@@ -1293,13 +1690,14 @@ class AstraEditGUI:
             initialdir=pathlib.Path(tab.file_path).parent,
         )
         if path:
-            tab.file_path = str(pathlib.Path(path).resolve())
+            dest = str(pathlib.Path(path).resolve())
+            if not tab.save(path=dest):
+                return
             tab.is_readonly = False
             tab.text_area.config(state="normal")
-            if tab.save():
-                self.update_tab_title(tab)
-                self.save_recent_file(tab.file_path)
-                self.status_var.set(t("saved_as", name=tab.get_short_name()))
+            self.update_tab_title(tab)
+            self.save_recent_file(tab.file_path)
+            self.status_var.set(t("saved_as", name=tab.get_short_name()))
 
     def save_all(self):
         saved = 0
@@ -1472,6 +1870,28 @@ class AstraEditGUI:
             border=0,
         ).pack(side="left", padx=3)
 
+    def _search_spec(self, pattern):
+        if self.regex_var is not None:
+            try:
+                self.use_regex = bool(self.regex_var.get())
+            except tk.TclError:
+                pass
+        try:
+            return SearchPattern(pattern, self.use_regex)
+        except ValueError as err:
+            self.status_var.set(t("regex_error", err=err))
+            messagebox.showerror(t("error"), t("regex_error", err=err))
+            return None
+
+    def _select_span(self, text_widget, content, abs_start, abs_end):
+        pos = offset_to_tk_index(content, abs_start)
+        end_pos = offset_to_tk_index(content, abs_end)
+        text_widget.tag_remove("sel", "1.0", tk.END)
+        text_widget.tag_add("sel", pos, end_pos)
+        text_widget.mark_set(tk.INSERT, end_pos)
+        text_widget.see(pos)
+        return pos
+
     def find_next(self):
         tab = self.get_current_tab()
         if not tab:
@@ -1481,103 +1901,61 @@ class AstraEditGUI:
         if not pattern:
             return
 
+        spec = self._search_spec(pattern)
+        if spec is None:
+            return
+
         self.last_search = pattern
         text_widget = tab.text_area
+        content = text_widget.get("1.0", "end-1c")
         start_pos = text_widget.index(tk.INSERT)
-
         try:
             sel_end = text_widget.index(tk.SEL_LAST)
             if sel_end:
                 start_pos = sel_end
         except tk.TclError:
             pass
+        start = tk_index_to_offset(content, start_pos)
 
-        pos = None
-        end_pos = None
+        window, offset, limited = search_window(content, start, spec.use_regex)
+        match = spec.find(window)
+        wrapped = False
+        if match is None and start > 0:
+            window, offset, limited = search_window(content, 0, spec.use_regex)
+            match = spec.find(window)
+            wrapped = match is not None
 
-        if self.use_regex:
-            try:
-                content = text_widget.get(start_pos, tk.END)
-                match = re.search(pattern, content, re.IGNORECASE)
-                if match:
-                    start_line, start_col = map(int, start_pos.split("."))
-                    match_start, match_end = match.start(), match.end()
-                    lines_before = content[:match_start].count("\n")
-                    if lines_before > 0:
-                        last_newline = content[:match_start].rfind("\n")
-                        col_offset = match_start - last_newline - 1
-                    else:
-                        col_offset = match_start + start_col
-                    pos = f"{start_line + lines_before}.{col_offset}"
-                    end_pos = f"{pos}+{match_end - match_start}c"
-                else:
-                    content = text_widget.get("1.0", tk.END)
-                    match = re.search(pattern, content, re.IGNORECASE)
-                    if match:
-                        self.status_var.set(t("search_wrapped"))
-                        match_start, match_end = match.start(), match.end()
-                        lines_before = content[:match_start].count("\n")
-                        if lines_before > 0:
-                            last_newline = content[:match_start].rfind("\n")
-                            col_offset = match_start - last_newline - 1
-                        else:
-                            col_offset = match_start
-                        pos = f"{1 + lines_before}.{col_offset}"
-                        end_pos = f"{pos}+{match_end - match_start}c"
-            except re.error as e:
-                self.status_var.set(t("regex_error", err=e))
-                messagebox.showerror(t("error"), str(e))
-                return
-        else:
-            pos = text_widget.search(pattern, start_pos, stopindex=tk.END, nocase=True)
-            if not pos:
-                pos = text_widget.search(pattern, "1.0", stopindex=tk.END, nocase=True)
-                if pos:
-                    self.status_var.set(t("search_wrapped"))
-            if pos:
-                end_pos = f"{pos}+{len(pattern)}c"
-
-        if pos:
-            text_widget.tag_remove("sel", "1.0", tk.END)
-            text_widget.tag_add("sel", pos, end_pos)
-            text_widget.mark_set(tk.INSERT, end_pos)
-            text_widget.see(pos)
-            line = pos.split(".")[0]
-            self.status_var.set(t("found_line", line=line))
-        else:
+        if match is None:
             self.status_var.set(t("not_found", pattern=pattern))
             messagebox.showinfo(t("dlg_find"), t("not_found", pattern=pattern))
+            return
+
+        pos = self._select_span(text_widget, content, offset + match.start(), offset + match.end())
+        if wrapped:
+            msg = t("search_wrapped")
+        else:
+            msg = t("found_line", line=pos.split(".")[0])
+        if limited:
+            msg = "%s | %s" % (msg, t("search_limited"))
+        self.status_var.set(msg)
 
     def replace_one(self, find_text, replace_text):
         tab = self.get_current_tab()
         if not tab or not find_text:
             return
 
-        text_widget = tab.text_area
-        if self.regex_var is not None:
-            try:
-                self.use_regex = bool(self.regex_var.get())
-            except tk.TclError:
-                pass
+        spec = self._search_spec(find_text)
+        if spec is None:
+            return
 
+        self.last_search = find_text
+        text_widget = tab.text_area
         try:
             sel_start = text_widget.index(tk.SEL_FIRST)
             sel_end = text_widget.index(tk.SEL_LAST)
             selected = text_widget.get(sel_start, sel_end)
-            should_replace = False
-            new_text = replace_text
-
-            if self.use_regex:
-                try:
-                    if re.fullmatch(find_text, selected, re.IGNORECASE):
-                        should_replace = True
-                        new_text = re.sub(find_text, replace_text, selected, count=1, flags=re.IGNORECASE)
-                except re.error:
-                    pass
-            elif selected.lower() == find_text.lower():
-                should_replace = True
-
-            if should_replace:
+            new_text, n = spec.replace_in(selected, replace_text, count=1)
+            if n:
                 text_widget.delete(sel_start, sel_end)
                 text_widget.insert(sel_start, new_text)
                 self.status_var.set(t("replaced_one"))
@@ -1593,32 +1971,32 @@ class AstraEditGUI:
         if not tab or not find_text:
             return
 
+        spec = self._search_spec(find_text)
+        if spec is None:
+            return
+
+        self.last_search = find_text
         text_widget = tab.text_area
         content = text_widget.get("1.0", "end-1c")
-        if self.regex_var is not None:
-            try:
-                self.use_regex = bool(self.regex_var.get())
-            except tk.TclError:
-                pass
+        limited = spec.use_regex and len(content) > MAX_REGEX_CHARS
+        if limited:
+            head, tail = content[:MAX_REGEX_CHARS], content[MAX_REGEX_CHARS:]
+            new_head, count = spec.replace_in(head, replace_text)
+            new_content = new_head + tail
+        else:
+            new_content, count = spec.replace_in(content, replace_text)
+        if count == 0:
+            messagebox.showinfo(t("dlg_replace_all"), t("not_found", pattern=find_text))
+            return
 
-        try:
-            if self.use_regex:
-                new_content, count = re.subn(find_text, replace_text, content, flags=re.IGNORECASE)
-            else:
-                pattern = re.compile(re.escape(find_text), re.IGNORECASE)
-                new_content, count = pattern.subn(replace_text, content)
-
-            if count == 0:
-                messagebox.showinfo(t("dlg_replace_all"), t("not_found", pattern=find_text))
-                return
-
-            text_widget.delete("1.0", tk.END)
-            text_widget.insert("1.0", new_content)
-            tab.update_syntax_highlighting()
-            self.status_var.set(t("replaced_n", n=count))
-            messagebox.showinfo(t("dlg_replace_all"), t("replaced_n", n=count))
-        except re.error as e:
-            messagebox.showerror(t("error"), str(e))
+        text_widget.delete("1.0", tk.END)
+        text_widget.insert("1.0", new_content)
+        tab.update_syntax_highlighting(force=True)
+        status = t("replaced_n", n=count)
+        if limited:
+            status = "%s | %s" % (status, t("search_limited"))
+        self.status_var.set(status)
+        messagebox.showinfo(t("dlg_replace_all"), status)
 
     # ==========================================
     # MISC
@@ -1731,7 +2109,18 @@ class AstraEditGUI:
         if self.autosave_enabled:
             for tab in self._tabs:
                 if tab.is_modified and not tab.is_readonly:
-                    tab.save()
+                    try:
+                        write_text_file(
+                            str(autosave_path_for(tab.file_path)),
+                            tab.text_area.get("1.0", "end-1c"),
+                            tab.file_encoding,
+                            tab.file_newline,
+                        )
+                    except Exception as e:
+                        print_status(
+                            t("write_error", path=str(autosave_path_for(tab.file_path)), err=e),
+                            "error",
+                        )
         self.root.after(self.autosave_interval, self.schedule_autosave)
 
     def load_recent_files(self):
@@ -1840,11 +2229,13 @@ class AstraEditGUI:
         messagebox.showinfo(t("about_title"), t("about_body", app=APP_NAME))
 
     def on_close(self):
-        if self.process and self.process.poll() is None:
+        if self.runner.is_busy():
             response = messagebox.askyesno(t("process_alive_title"), t("process_alive_msg"))
             if not response:
                 return
-            terminate_process_tree(self.process)
+            proc = self.runner.request_stop()
+            if proc is not None:
+                terminate_process_tree(proc)
 
         modified_tabs = [tab for tab in self._tabs if tab.is_modified]
         if modified_tabs:

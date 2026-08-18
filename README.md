@@ -1,6 +1,6 @@
-# AstraEdit 4.5 — text editor + Python console
+# AstraEdit 4.6 — text editor + Python console
 
-[![Version](https://img.shields.io/badge/version-4.5-blue)](https://github.com/Maciej-EriAmo/Astraedit)
+[![Version](https://img.shields.io/badge/version-4.6-blue)](https://github.com/Maciej-EriAmo/Astraedit)
 [![Python](https://img.shields.io/badge/python-3.7+-green)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-orange)](LICENSE)
 
@@ -20,11 +20,11 @@ Hybrid text editor written in Python. It runs as a **GUI** (Tkinter) or a **TUI*
 - **English / Polish**: `--lang en|pl`, View → Language, or `ASTRAEDIT_LANG`
 
 ### Editing
-- Syntax highlighting when Pygments is installed (keywords, comments, strings, numbers, names, operators)
+- Syntax highlighting when Pygments is installed (full under 500 KB, slower then visible-window, off above 5 MB)
 - Line numbers (width grows with the file; follows mouse-wheel scroll). The editor does not word-wrap — long lines scroll horizontally.
-- Bracket matching (`()` `[]` `{}` `<>`, 2000-character search cap)
+- Bracket matching (`()` `[]` `{}`; skips strings/comments; `<`/`>` are comparisons)
 - Undo / Redo
-- Auto-save every 30 seconds when the View checkbox is on (skips read-only files)
+- Draft auto-save every 30 seconds (`.astraedit/autosave/*.autosave` next to the file; Ctrl+S writes the original)
 
 ### Search
 - Find & Replace, including regular expressions
@@ -35,13 +35,15 @@ Hybrid text editor written in Python. It runs as a **GUI** (Tkinter) or a **TUI*
 ### Run
 - **Python only** (`.py`, `.pyw`). Other files stay in the editor; F5 explains why.
 - GUI console: stdin / stdout / stderr; type into `>>>` (empty Enter sends a newline)
-- STOP kills the child process tree (`taskkill /T` on Windows)
+- STOP sends terminate, then kills the process tree if it is still alive
 - Colored output: green stdin, red stderr, blue status
 - F5 saves first, then runs
 
 ### Safety
 - Binary-file detection (NUL in the first 1 KB). Those files are not saved back as text.
 - Encoding tries, in order: UTF-8, UTF-8-SIG, CP1250, ISO-8859-2, then Latin-1 (Latin-1 accepts every byte, so it has to be last)
+- Saves are atomic (temp + fsync + replace) and use strict encoding. A failed encode offers UTF-8; the document stays dirty
+- Detected encoding and newline (`LF` / `CRLF` / `CR`) are kept on save in both GUI and TUI
 - Read-only mode when the file is not writable
 - Prompt before closing unsaved tabs
 
@@ -265,12 +267,15 @@ pip install prompt_toolkit
 - Minimap
 - Plugin API
 
-### 4.6
+### 4.7
 - Project explorer
 - Embedded terminal (not only the run console)
 - Snippets
 - Multi-cursor
 - Code folding
+
+### 4.6
+Shipped: atomic save, process state machine, `Document` model, safer search, scaled highlighting. See [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -306,7 +311,7 @@ MIT — see [LICENSE](LICENSE). Copyright (c) 2025 Maciej Mazur.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  AstraEdit 4.5 [GUI] – main.py                              │
+│  AstraEdit 4.6 [GUI] – main.py                              │
 ├─────────────────────────────────────────────────────────────┤
 │ File  Edit  Run  View  Help                                 │
 ├─────────────────────────────────────────────────────────────┤

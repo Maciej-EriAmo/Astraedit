@@ -36,7 +36,7 @@ Thanks for helping. This repo is a small hybrid editor (Tkinter GUI + prompt_too
 
 ## Tests / smoke
 
-There is no heavy test suite yet. Before a PR:
+Before a PR:
 
 ```bash
 python -m py_compile astraedit.py i18n.py Astraedit-4.5.py

@@ -1,6 +1,6 @@
-# AstraEdit 4.5 — edytor + konsola Pythona
+# AstraEdit 4.6 — edytor + konsola Pythona
 
-[![Version](https://img.shields.io/badge/version-4.5-blue)](https://github.com/Maciej-EriAmo/Astraedit)
+[![Version](https://img.shields.io/badge/version-4.6-blue)](https://github.com/Maciej-EriAmo/Astraedit)
 [![Python](https://img.shields.io/badge/python-3.7+-green)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-orange)](LICENSE)
 
@@ -20,11 +20,11 @@ Hybrydowy edytor tekstu w Pythonie. Działa jako **GUI** (Tkinter) albo **TUI** 
 - **Polski / angielski**: `--lang pl|en`, Widok → Język, albo `ASTRAEDIT_LANG`
 
 ### Edycja
-- Kolorowanie składni (Pygments)
+- Kolorowanie składni (Pygments; pełne do 500 KB, potem okno widoczne, wyłączone powyżej 5 MB)
 - Numeracja linii (szerokość rośnie z plikiem). Bez zawijania wierszy — długie linie mają poziomy scroll.
-- Dopasowanie nawiasów (`()` `[]` `{}` `<>`, limit 2000 znaków)
+- Dopasowanie nawiasów (`()` `[]` `{}`; pomija stringi i komentarze; `<`/`>` to operatory)
 - Cofnij / Ponów
-- Auto-zapis co 30 s, gdy checkbox w Widok jest włączony (pomija pliki tylko do odczytu)
+- Szkic auto-zapisu co 30 s (`.astraedit/autosave/*.autosave` obok pliku; Ctrl+S zapisuje oryginał)
 
 ### Wyszukiwanie
 - Znajdź i zamień, w tym wyrażenia regularne
@@ -35,13 +35,15 @@ Hybrydowy edytor tekstu w Pythonie. Działa jako **GUI** (Tkinter) albo **TUI** 
 ### Uruchamianie
 - **Tylko Python** (`.py`, `.pyw`). Inne pliki zostają w edytorze; F5 mówi dlaczego
 - Konsola GUI: stdin / stdout / stderr; `>>>` (pusty Enter wysyła nową linię)
-- STOP zabija drzewo procesu (`taskkill /T` na Windows)
+- STOP najpierw kończy proces, potem zabija drzewo, jeśli nadal działa
 - Kolory: zielony stdin, czerwony stderr, niebieski status
 - F5 najpierw zapisuje, potem uruchamia
 
 ### Bezpieczeństwo
 - Wykrywanie plików binarnych (bajt NUL w pierwszym 1 KB); taki plik nie jest zapisywany z powrotem jako tekst
 - Próby kodowania po kolei: UTF-8, UTF-8-SIG, CP1250, ISO-8859-2, na końcu Latin-1 (Latin-1 przyjmuje każdy bajt, więc musi być ostatni)
+- Zapis atomowy (tmp + fsync + replace) i `errors=strict`. Przy błędzie kodowania proponowane jest UTF-8; dokument zostaje brudny
+- Wykryte kodowanie i końce linii (`LF` / `CRLF` / `CR`) są zachowywane w GUI i TUI
 - Tryb tylko do odczytu bez uprawnień zapisu
 - Pytanie przed zamknięciem niezapisanych kart
 
