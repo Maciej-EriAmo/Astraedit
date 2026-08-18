@@ -1,5 +1,10 @@
 # Changelog
 
+## 4.5.3 — TUI starts in English
+
+- TUI opens in English (locale / saved language do not apply). `--lang pl` still forces Polish.
+- Status bar: `F8:EN/PL` toggles the interface.
+
 ## 4.5.2 — Make advertised behavior real
 
 - Auto-save timer always runs; the View checkbox actually turns saving back on.

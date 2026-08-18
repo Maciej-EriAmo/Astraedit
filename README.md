@@ -169,7 +169,7 @@ If `--lang` is omitted, AstraEdit uses the saved config, then the environment, t
 |----------|--------|
 | `F1` | Shortcuts window |
 
-TUI extras: `Ctrl + Q` quit, `Ctrl + S` save, `F2` save as, `Ctrl + F` search, `F5` run (editor suspends to the terminal, then returns).
+TUI extras: starts in **English**. `Ctrl + Q` quit, `Ctrl + S` save, `F2` save as, `Ctrl + F` search, `F5` run (drops to the terminal, then returns), `F8` switch EN/PL. Override with `--lang pl`.
 
 ---
 

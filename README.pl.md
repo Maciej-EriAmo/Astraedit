@@ -82,6 +82,7 @@ python astraedit.py
 python astraedit.py main.py utils.py config.json
 python astraedit.py --gui main.py
 python astraedit.py --tui main.py
+# TUI zawsze startuje po angielsku; F8 przełącza EN/PL. Wymuś polski: --lang pl
 python astraedit.py --lang pl
 python astraedit.py --lang en
 ```

@@ -274,7 +274,20 @@ class AstraEditTUI:
         def _(event):
             self.run_script(event.app)
 
+        @kb.add("f8")
+        def _(event):
+            self.toggle_language()
+
         return kb
+
+    def apply_language(self):
+        self.status_text = t("status_tui")
+        self.frame.title = self.get_title()
+
+    def toggle_language(self):
+        set_lang("pl" if get_lang() == "en" else "en")
+        save_config({"language": get_lang()})
+        self.apply_language()
 
     def save_current(self):
         if self.binary_blocked:
@@ -1832,10 +1845,13 @@ def parse_args(argv=None):
     return parser.parse_args(argv)
 
 
-def launch_tui(files):
+def launch_tui(files, cli_lang=None):
     if not Application:
         print_status(t("prompt_toolkit_missing"), "error")
         return False
+    # TUI always opens in English unless the user passed --lang.
+    if not cli_lang:
+        set_lang("en")
     file_path = files[0] if files else t("untitled_file")
     AstraEditTUI(file_path).run()
     return True
@@ -1867,7 +1883,7 @@ def main(argv=None):
     if use_gui:
         if not tk:
             print_status(t("tk_missing"), "warn")
-            if not launch_tui(args.files):
+            if not launch_tui(args.files, cli_lang=args.lang):
                 sys.exit(1)
             return
         try:
@@ -1877,10 +1893,10 @@ def main(argv=None):
             import traceback
 
             traceback.print_exc()
-            if not launch_tui(args.files):
+            if not launch_tui(args.files, cli_lang=args.lang):
                 sys.exit(1)
     else:
-        if not launch_tui(args.files):
+        if not launch_tui(args.files, cli_lang=args.lang):
             if tk:
                 launch_gui(args.files)
             else:
