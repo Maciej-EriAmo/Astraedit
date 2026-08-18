@@ -40,6 +40,7 @@ There is no heavy test suite yet. Before a PR:
 
 ```bash
 python -m py_compile astraedit.py i18n.py Astraedit-4.5.py
+python -m unittest discover -s tests -v
 python astraedit.py --help
 python astraedit.py --lang en --help
 ```

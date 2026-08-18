@@ -21,7 +21,7 @@ Hybrid text editor written in Python. It runs as a **GUI** (Tkinter) or a **TUI*
 
 ### Editing
 - Syntax highlighting when Pygments is installed (keywords, comments, strings, numbers, names, operators)
-- Line numbers (width grows with the file; follows mouse-wheel scroll)
+- Line numbers (width grows with the file; follows mouse-wheel scroll). The editor does not word-wrap — long lines scroll horizontally.
 - Bracket matching (`()` `[]` `{}` `<>`, 2000-character search cap)
 - Undo / Redo
 - Auto-save every 30 seconds when the View checkbox is on (skips read-only files)
@@ -41,7 +41,7 @@ Hybrid text editor written in Python. It runs as a **GUI** (Tkinter) or a **TUI*
 
 ### Safety
 - Binary-file detection (NUL in the first 1 KB). Those files are not saved back as text.
-- Encoding tries, in order: UTF-8, UTF-8-SIG, CP1250, Latin-1, ISO-8859-2 (not a charset detector)
+- Encoding tries, in order: UTF-8, UTF-8-SIG, CP1250, ISO-8859-2, then Latin-1 (Latin-1 accepts every byte, so it has to be last)
 - Read-only mode when the file is not writable
 - Prompt before closing unsaved tabs
 
@@ -240,7 +240,7 @@ pip install prompt_toolkit
 
 - Binary files are rejected (NUL byte in the first 1 KB) and cannot be overwritten via Save.
 - Check permissions.
-- Tried encodings: UTF-8, CP1250, Latin-1, ISO-8859-2. Unknown bytes fall back to UTF-8 with replacement.
+- Tried encodings: UTF-8, CP1250, ISO-8859-2, then Latin-1. Unknown bytes fall back to UTF-8 with replacement.
 
 **Console shows no output**
 

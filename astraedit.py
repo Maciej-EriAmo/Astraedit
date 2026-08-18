@@ -19,6 +19,8 @@ APP_NAME = "AstraEdit 4.5"
 CONFIG_FILE = pathlib.Path.home() / ".astraedit_config.json"
 PYTHON_SUFFIXES = (".py", ".pyw")
 ICON_FILE = pathlib.Path(__file__).resolve().with_name("astraedit.ico")
+# latin-1 decodes every byte — it must stay last or later codecs never run.
+TEXT_ENCODINGS = ("utf-8", "utf-8-sig", "cp1250", "iso-8859-2", "latin-1")
 
 # ---- Config ----
 def load_config():
@@ -51,6 +53,19 @@ def print_status(msg, kind="info"):
 
 def is_python_source(path):
     return str(path).lower().endswith(PYTHON_SUFFIXES)
+
+
+def next_untitled_name(open_paths, exists=os.path.exists):
+    """Name for a new buffer that is not open and does not already exist on disk."""
+    open_resolved = {str(pathlib.Path(p).resolve()) for p in open_paths}
+    n = 0
+    while n < 10000:
+        name = t("untitled_file") if n == 0 else t("untitled_n", n=n)
+        resolved = str(pathlib.Path(name).resolve())
+        if resolved not in open_resolved and not exists(resolved):
+            return name
+        n += 1
+    return t("untitled_n", n=n)
 
 
 def terminate_process_tree(proc):
@@ -95,8 +110,7 @@ def read_text_file_smart(path):
     if is_binary_file(path):
         raise ValueError(t("binary_error"))
 
-    encodings = ["utf-8", "utf-8-sig", "cp1250", "latin-1", "iso-8859-2"]
-    for enc in encodings:
+    for enc in TEXT_ENCODINGS:
         try:
             with open(path, "r", encoding=enc) as f:
                 return f.read(), enc
@@ -132,7 +146,6 @@ try:
     from pygments.lexers import get_lexer_for_filename, TextLexer
     from pygments.util import ClassNotFound
 except ImportError:
-    print_status(t("pygments_missing"), "warn")
     get_lexer_for_filename = None
     TextLexer = None
     ClassNotFound = Exception
@@ -291,15 +304,16 @@ class AstraEditTUI:
 
     def save_current(self):
         if self.binary_blocked:
-            print_status(t("binary_save_blocked"), "error")
+            self.status_text = t("binary_save_blocked")
             return False
         try:
             write_text_file(self.file_path, self.editor.text)
             self.is_modified = False
             self.frame.title = self.get_title()
+            self.status_text = t("status_tui")
             return True
         except Exception as e:
-            print_status(t("write_error", path=self.file_path, err=e), "error")
+            self.status_text = t("write_error", path=self.file_path, err=e)
             return False
 
     def goto_line_dialog(self, app):
@@ -308,12 +322,18 @@ class AstraEditTUI:
         def go():
             try:
                 line_num = int(tf.text.strip())
-                self.editor.buffer.cursor_position = (
-                    self.editor.buffer.document.translate_row_col_to_index(line_num - 1, 0)
-                )
-                self._pop_float(app)
-            except (ValueError, IndexError):
+            except ValueError:
                 self.status_text = t("invalid_line")
+                return
+            doc = self.editor.buffer.document
+            if line_num < 1 or line_num > doc.line_count:
+                self.status_text = t("invalid_line")
+                return
+            self.editor.buffer.cursor_position = doc.translate_row_col_to_index(
+                line_num - 1, 0
+            )
+            self.status_text = t("status_tui")
+            self._pop_float(app)
 
         dialog = Dialog(
             title=t("dlg_goto"),
@@ -335,7 +355,8 @@ class AstraEditTUI:
                 return
             try:
                 write_text_file(path, self.editor.text)
-            except Exception:
+            except Exception as e:
+                self.status_text = t("write_error", path=path, err=e)
                 return
             self.file_path = str(pathlib.Path(path).expanduser().resolve())
             self.binary_blocked = False
@@ -356,10 +377,10 @@ class AstraEditTUI:
 
     def run_script(self, app):
         if not is_python_source(self.file_path):
-            print_status(t("run_only_python"), "warn")
+            self.status_text = t("run_only_python")
             return
         if self.binary_blocked:
-            print_status(t("binary_save_blocked"), "error")
+            self.status_text = t("binary_save_blocked")
             return
         if not self.save_current():
             return
@@ -369,9 +390,12 @@ class AstraEditTUI:
             print(f"\n{'=' * 60}")
             print(f"  {t('running', name=name)}")
             print(f"{'=' * 60}\n")
-            exit_code = os.system(f'"{sys.executable}" "{self.file_path}"')
+            completed = subprocess.run(
+                [sys.executable, self.file_path],
+                cwd=str(pathlib.Path(self.file_path).parent),
+            )
             print(f"\n{'=' * 60}")
-            print(f"  {t('finished', code=exit_code)}")
+            print(f"  {t('finished', code=completed.returncode)}")
             print(f"{'=' * 60}")
             try:
                 input(f"\n{t('press_enter')}")
@@ -439,9 +463,15 @@ class EditorTab:
         )
         self.line_numbers.pack(side="left", fill="y")
 
+        right = tk.Frame(container, bg=app.bg_color)
+        right.pack(side="left", fill="both", expand=True)
+
+        self.hscroll = tk.Scrollbar(right, orient="horizontal", bg=app.line_num_bg)
+        self.hscroll.pack(side="bottom", fill="x")
+
         self.text_area = scrolledtext.ScrolledText(
-            container,
-            wrap="word",
+            right,
+            wrap="none",
             undo=True,
             bg=app.bg_color,
             fg=app.fg_color,
@@ -450,10 +480,11 @@ class EditorTab:
             font=("Consolas", 11),
             border=0,
         )
-        self.text_area.pack(side="left", fill="both", expand=True)
+        self.text_area.pack(side="top", fill="both", expand=True)
+        self.hscroll.config(command=self.text_area.xview)
+        self.text_area.config(xscrollcommand=self.hscroll.set)
 
         self.text_area.vbar.config(command=self.on_scrollbar)
-        self.line_numbers.config(yscrollcommand=self.text_area.vbar.set)
 
         tags = {
             "Keyword": "#569cd6",
@@ -489,6 +520,8 @@ class EditorTab:
                 content, self.file_encoding = read_text_file_smart(self.file_path)
                 self.text_area.insert("1.0", content)
                 self.update_syntax_highlighting()
+                self.text_area.edit_modified(False)
+                self.is_modified = False
 
                 if not os.access(self.file_path, os.W_OK):
                     self.is_readonly = True
@@ -501,6 +534,8 @@ class EditorTab:
                 return False
 
         self.update_line_numbers()
+        self.text_area.edit_modified(False)
+        self.is_modified = False
         return True
 
     def on_scrollbar(self, *args):
@@ -971,6 +1006,7 @@ class AstraEditGUI:
         self.root.bind("<Control-o>", lambda e: self.open_file_dialog())
         self.root.bind("<Control-s>", lambda e: self.save_current())
         self.root.bind("<Control-Shift-S>", lambda e: self.save_all())
+        self.root.bind("<Control-Shift-s>", lambda e: self.save_all())
         self.root.bind("<Control-w>", lambda e: self.close_current_tab())
         self.root.bind("<F2>", lambda e: self.save_as())
         self.root.bind("<F1>", lambda e: self.show_help())
@@ -1027,7 +1063,7 @@ class AstraEditGUI:
                 "stderr": subprocess.PIPE,
                 "stdin": subprocess.PIPE,
                 "text": True,
-                "bufsize": 1,
+                "bufsize": 0,
                 "cwd": str(pathlib.Path(file_path).parent),
                 "encoding": "utf-8",
                 "errors": "replace",
@@ -1058,10 +1094,19 @@ class AstraEditGUI:
             self.msg_queue.put(("status", "stopped", None))
 
     def _reader(self, stream, tag):
+        """Flush on newline or a short chunk so input() prompts appear."""
         try:
-            for line in iter(stream.readline, ""):
-                if line:
-                    self.msg_queue.put(("text", line, tag))
+            buf = []
+            while True:
+                ch = stream.read(1)
+                if ch == "":
+                    break
+                buf.append(ch)
+                if ch == "\n" or len(buf) >= 16:
+                    self.msg_queue.put(("text", "".join(buf), tag))
+                    buf = []
+            if buf:
+                self.msg_queue.put(("text", "".join(buf), tag))
         except Exception:
             pass
         finally:
@@ -1124,13 +1169,7 @@ class AstraEditGUI:
     # ==========================================
     def new_tab(self, file_path=None):
         if file_path is None:
-            file_path = t("untitled_file")
-            counter = 1
-            while any(
-                tab.file_path == str(pathlib.Path(file_path).resolve()) for tab in self._tabs
-            ):
-                file_path = t("untitled_n", n=counter)
-                counter += 1
+            file_path = next_untitled_name(tab.file_path for tab in self._tabs)
 
         tab = EditorTab(self.notebook, file_path, self)
         self._tabs.append(tab)
@@ -1530,9 +1569,9 @@ class AstraEditGUI:
 
             if self.use_regex:
                 try:
-                    if re.match(find_text, selected, re.IGNORECASE):
+                    if re.fullmatch(find_text, selected, re.IGNORECASE):
                         should_replace = True
-                        new_text = re.sub(find_text, replace_text, selected, flags=re.IGNORECASE)
+                        new_text = re.sub(find_text, replace_text, selected, count=1, flags=re.IGNORECASE)
                 except re.error:
                     pass
             elif selected.lower() == find_text.lower():
@@ -1611,12 +1650,17 @@ class AstraEditGUI:
         def go():
             try:
                 line = int(line_entry.get())
-                tab.text_area.mark_set(tk.INSERT, f"{line}.0")
-                tab.text_area.see(f"{line}.0")
-                self.update_cursor_position()
-                dialog.destroy()
             except ValueError:
                 messagebox.showerror(t("error"), t("invalid_line"))
+                return
+            total = int(tab.text_area.index("end-1c").split(".")[0])
+            if line < 1 or line > total:
+                messagebox.showerror(t("error"), t("invalid_line"))
+                return
+            tab.text_area.mark_set(tk.INSERT, f"{line}.0")
+            tab.text_area.see(f"{line}.0")
+            self.update_cursor_position()
+            dialog.destroy()
 
         line_entry.bind("<Return>", lambda e: go())
 
@@ -1811,6 +1855,8 @@ class AstraEditGUI:
                 return
             if response:
                 self.save_all()
+                if any(tab.is_modified for tab in self._tabs):
+                    return
 
         self.root.quit()
 
@@ -1852,7 +1898,7 @@ def launch_tui(files, cli_lang=None):
     # TUI always opens in English unless the user passed --lang.
     if not cli_lang:
         set_lang("en")
-    file_path = files[0] if files else t("untitled_file")
+    file_path = files[0] if files else next_untitled_name([])
     AstraEditTUI(file_path).run()
     return True
 
@@ -1879,6 +1925,8 @@ def main(argv=None):
         use_gui = True
 
     print_status(t("start_mode", mode=t("mode_gui") if use_gui else t("mode_tui")))
+    if not get_lexer_for_filename:
+        print_status(t("pygments_missing"), "warn")
 
     if use_gui:
         if not tk:

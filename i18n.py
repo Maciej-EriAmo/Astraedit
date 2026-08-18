@@ -1,10 +1,12 @@
 """AstraEdit translations (English / Polish).
 
-Language resolution order:
-  1. explicit set_lang() / --lang
+GUI language resolution:
+  1. --lang
   2. saved config (~/.astraedit_config.json → language)
   3. ASTRAEDIT_LANG
   4. system locale (pl_* → Polish, otherwise English)
+
+TUI always starts in English unless --lang is passed. F8 toggles EN/PL.
 """
 
 from __future__ import annotations
@@ -340,16 +342,12 @@ def detect_lang() -> str:
     env = normalize_lang(os.environ.get("ASTRAEDIT_LANG") or os.environ.get("LANG"))
     if env:
         return env
-    for getter in (
-        lambda: locale.getlocale()[0],
-        lambda: locale.getdefaultlocale()[0],
-    ):
-        try:
-            found = normalize_lang(getter())
-            if found:
-                return found
-        except Exception:
-            continue
+    try:
+        found = normalize_lang(locale.getlocale()[0])
+        if found:
+            return found
+    except Exception:
+        pass
     return "en"
 
 

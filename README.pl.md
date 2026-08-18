@@ -21,7 +21,7 @@ Hybrydowy edytor tekstu w Pythonie. Działa jako **GUI** (Tkinter) albo **TUI** 
 
 ### Edycja
 - Kolorowanie składni (Pygments)
-- Numeracja linii (szerokość rośnie z plikiem)
+- Numeracja linii (szerokość rośnie z plikiem). Bez zawijania wierszy — długie linie mają poziomy scroll.
 - Dopasowanie nawiasów (`()` `[]` `{}` `<>`, limit 2000 znaków)
 - Cofnij / Ponów
 - Auto-zapis co 30 s, gdy checkbox w Widok jest włączony (pomija pliki tylko do odczytu)
@@ -41,7 +41,7 @@ Hybrydowy edytor tekstu w Pythonie. Działa jako **GUI** (Tkinter) albo **TUI** 
 
 ### Bezpieczeństwo
 - Wykrywanie plików binarnych (bajt NUL w pierwszym 1 KB); taki plik nie jest zapisywany z powrotem jako tekst
-- Próby kodowania po kolei: UTF-8, UTF-8-SIG, CP1250, Latin-1, ISO-8859-2 (to nie jest detektor charsetu)
+- Próby kodowania po kolei: UTF-8, UTF-8-SIG, CP1250, ISO-8859-2, na końcu Latin-1 (Latin-1 przyjmuje każdy bajt, więc musi być ostatni)
 - Tryb tylko do odczytu bez uprawnień zapisu
 - Pytanie przed zamknięciem niezapisanych kart
 

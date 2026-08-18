@@ -1,5 +1,17 @@
 # Changelog
 
+## 4.5.4 — Thesis-review correctness
+
+- Opening a file no longer marks the tab dirty (`<<Modified>>` after insert).
+- New tab / TUI default buffer will not silently open an existing `untitled.txt` / `notatka.txt`.
+- Encoding order: ISO-8859-2 before Latin-1 (Latin-1 never fails).
+- GUI wrap is off; horizontal scrollbar added so line numbers match.
+- TUI run uses `subprocess.run` (real exit code, no shell). Errors go to the status bar, not a hidden stdout.
+- Console reader flushes short chunks so `input()` prompts appear.
+- Replace-one regex uses `fullmatch`. Go-to-line rejects out-of-range numbers.
+- Quit-after-save-all aborts if a save still failed.
+- No Pygments warning on `import`. `tests/test_core.py` covers i18n, encodings, untitled names.
+
 ## 4.5.3 — TUI starts in English
 
 - TUI opens in English (locale / saved language do not apply). `--lang pl` still forces Polish.
