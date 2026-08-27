@@ -1,6 +1,6 @@
-# AstraEdit 4.6 — text editor + Python console
+# AstraEdit 4.7 — text editor + Python console
 
-[![Version](https://img.shields.io/badge/version-4.6-blue)](https://github.com/Maciej-EriAmo/Astraedit)
+[![Version](https://img.shields.io/badge/version-4.7-blue)](https://github.com/Maciej-EriAmo/Astraedit)
 [![Python](https://img.shields.io/badge/python-3.7+-green)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-orange)](LICENSE)
 
@@ -14,30 +14,38 @@ Hybrid text editor written in Python. It runs as a **GUI** (Tkinter) or a **TUI*
 
 ### Interface
 - **Dual mode**: GUI (Tkinter) and TUI (terminal)
-- **Tabs (GUI)**: several files at once; the × in the tab title is a click target, not a separate widget
+- **Tabs (GUI)**: several files at once; the × in the tab title is a click target, not a separate widget. Right-click and middle-click apply to that tab. Ctrl+Tab cycles.
+- **Project explorer (GUI)**: folder tree of the working directory; Git porcelain marks when `.git` is present
 - **Dark theme**: VS Code–style colors
-- **Split view (GUI)**: editor + run console
+- **Split view (GUI)**: explorer + editor + run console
 - **English / Polish**: `--lang en|pl`, View → Language, or `ASTRAEDIT_LANG`
+- **Zoom (GUI)**: Ctrl+= / Ctrl+- / Ctrl+0, or Ctrl+mouse wheel
 
 ### Editing
 - Syntax highlighting when Pygments is installed (full under 500 KB, slower then visible-window, off above 5 MB)
 - Line numbers (width grows with the file; follows mouse-wheel scroll). The editor does not word-wrap — long lines scroll horizontally.
+- Auto-indent on Enter (extra level after `:`); Tab inserts 4 spaces; Shift+Tab outdents
+- Snippets: Tab on `def`, `class`, `try`, `for`, `ifmain`, `main` (or Edit → Snippets)
+- Toggle comment (Ctrl+/)
+- Word complete from the current buffer (Ctrl+Space)
 - Bracket matching (`()` `[]` `{}`; skips strings/comments; `<`/`>` are comparisons)
 - Undo / Redo
-- Draft auto-save every 30 seconds (`.astraedit/autosave/*.autosave` next to the file; Ctrl+S writes the original)
+- Draft auto-save every 30 seconds (`.astraedit/autosave/*.autosave` next to the file; Ctrl+S writes the original). A newer draft is offered even for an unsaved untitled buffer.
 
 ### Search
 - Find & Replace, including regular expressions
 - Find next (F3) — not search-as-you-type
-- Case-insensitive by default
+- Case-insensitive by default; optional Match case and Whole word
 - Go to line (Ctrl+G)
 
 ### Run
 - **Python only** (`.py`, `.pyw`). Other files stay in the editor; F5 explains why.
+- Interpreter: nearest `.venv`/`venv` walking up from the file, else AstraEdit's Python. Override with Run → Python interpreter
 - GUI console: stdin / stdout / stderr; type into `>>>` (empty Enter sends a newline)
 - STOP sends terminate, then kills the process tree if it is still alive
 - Colored output: green stdin, red stderr, blue status
 - F5 saves first, then runs
+- Reload prompt when the file changes on disk
 
 ### Safety
 - Binary-file detection (NUL in the first 1 KB). Those files are not saved back as text.
@@ -50,6 +58,7 @@ Hybrid text editor written in Python. It runs as a **GUI** (Tkinter) or a **TUI*
 ### Files
 - Last 10 recently opened files
 - Open several files at once
+- Session restore (files that still exist on disk) when started with no paths
 - Tab context menu (right-click): close / close others / close all
 
 ---
@@ -109,7 +118,7 @@ python astraedit.py --lang en
 python astraedit.py --lang pl
 ```
 
-The old launcher `Astraedit-4.5.py` still works; it just calls `astraedit.py`.
+The compatibility launcher `Astraedit-4.7.py` still works; it just calls `astraedit.py`.
 
 Environment override: `ASTRAEDIT_LANG=en` or `ASTRAEDIT_LANG=pl`.
 
@@ -137,6 +146,8 @@ If `--lang` is omitted, AstraEdit uses the saved config, then the environment, t
 | `Ctrl + W` | Close tab |
 | `F2` | Save As… |
 | Click `×` | Close that tab |
+| Middle-click tab | Close that tab |
+| `Ctrl + Tab` / `Ctrl + Shift + Tab` | Next / previous tab |
 
 ### Editing
 
@@ -146,6 +157,10 @@ If `--lang` is omitted, AstraEdit uses the saved config, then the environment, t
 | `Ctrl + Y` | Redo |
 | `Ctrl + C` / `V` / `X` | Copy / Paste / Cut (system / widget) |
 | `Ctrl + A` | Select all |
+| `Tab` / `Shift + Tab` | Indent / outdent (or expand a snippet) |
+| `Ctrl + /` | Toggle comment |
+| `Ctrl + Space` | Complete word from buffer |
+| `Ctrl + =` / `-` / `0` | Zoom in / out / reset |
 
 ### Search
 
@@ -171,7 +186,7 @@ If `--lang` is omitted, AstraEdit uses the saved config, then the environment, t
 |----------|--------|
 | `F1` | Shortcuts window |
 
-TUI extras: starts in **English**. `Ctrl + Q` quit, `Ctrl + S` save, `F2` save as, `Ctrl + F` search, `F5` run (drops to the terminal, then returns), `F8` switch EN/PL. Override with `--lang pl`.
+TUI extras: starts in **English**. `Ctrl + Q` quit (then clears the terminal), `Ctrl + S` save, `F2` save as, `Ctrl + F` search, `F5` run (drops to the terminal, then returns), `Ctrl + /` toggle comment, `Tab` indent or snippet, `F8` switch EN/PL. Override with `--lang pl`.
 
 ---
 
@@ -187,7 +202,7 @@ Starts automatically when a display is available (`DISPLAY` / `WAYLAND_DISPLAY` 
 python astraedit.py --tui file.py
 ```
 
-Useful over SSH or on a machine without a GUI. F5 drops to the terminal, runs the file, then returns after Enter.
+Useful over SSH or on a machine without a GUI. F5 drops to the terminal, runs the file, then returns after Enter. Quit clears the screen.
 
 ---
 
@@ -212,7 +227,14 @@ Path: `~/.astraedit_config.json`
 {
   "recent_files": ["C:/proj/main.py"],
   "language": "en",
-  "autosave": true
+  "autosave": true,
+  "font_size": 11,
+  "tab_size": 4,
+  "use_spaces": true,
+  "python_executable": "",
+  "show_explorer": true,
+  "session_files": ["C:/proj/main.py"],
+  "session_index": 0
 }
 ```
 
@@ -242,7 +264,7 @@ pip install prompt_toolkit
 
 - Binary files are rejected (NUL byte in the first 1 KB) and cannot be overwritten via Save.
 - Check permissions.
-- Tried encodings: UTF-8, CP1250, ISO-8859-2, then Latin-1. Unknown bytes fall back to UTF-8 with replacement.
+- Tried encodings: UTF-8, UTF-8-SIG, CP1250, ISO-8859-2, then Latin-1. Latin-1 accepts every byte, so a decode always succeeds; there is no UTF-8-with-replacement fallback.
 
 **Console shows no output**
 
@@ -260,22 +282,23 @@ pip install prompt_toolkit
 ## Roadmap
 
 ### 5.0
-- Autocomplete
-- Git status / commit / diff
+- Smarter autocomplete (not only buffer words)
+- Git commit / diff (explorer already shows porcelain marks)
 - Debugger
 - Split panes
 - Minimap
 - Plugin API
 
-### 4.7
-- Project explorer
+### 4.8
 - Embedded terminal (not only the run console)
-- Snippets
 - Multi-cursor
 - Code folding
 
+### 4.7
+Shipped: project explorer, snippets, venv-aware F5, auto-indent, comments, session restore, find options, zoom. See [CHANGELOG.md](CHANGELOG.md).
+
 ### 4.6
-Shipped: atomic save, process state machine, `Document` model, safer search, scaled highlighting. See [CHANGELOG.md](CHANGELOG.md).
+Shipped: atomic save, process state machine, `Document` model, safer search, scaled highlighting.
 
 ---
 
@@ -287,7 +310,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Bug fixes, docs, and extra languages are
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Copyright (c) 2025 Maciej Mazur.
+MIT — see [LICENSE](LICENSE). Copyright (c) 2025-2026 Maciej Mazur.
 
 ---
 
@@ -311,7 +334,7 @@ MIT — see [LICENSE](LICENSE). Copyright (c) 2025 Maciej Mazur.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  AstraEdit 4.6 [GUI] – main.py                              │
+│  AstraEdit 4.7 [GUI] – main.py                              │
 ├─────────────────────────────────────────────────────────────┤
 │ File  Edit  Run  View  Help                                 │
 ├─────────────────────────────────────────────────────────────┤

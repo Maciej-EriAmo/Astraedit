@@ -8,7 +8,7 @@ Thanks for helping. This repo is a small hybrid editor (Tkinter GUI + prompt_too
 
 1. Fork [Maciej-EriAmo/Astraedit](https://github.com/Maciej-EriAmo/Astraedit).
 2. Create a branch: `git checkout -b fix/describe-the-change`.
-3. Use the entry point `python astraedit.py` (not only `Astraedit-4.5.py`).
+3. Use the entry point `python astraedit.py` (not only `Astraedit-4.7.py`).
 4. Commit with a message that says *what* and *why*.
 5. Open a pull request against `main`.
 
@@ -26,7 +26,7 @@ Thanks for helping. This repo is a small hybrid editor (Tkinter GUI + prompt_too
 - Tab close-all / close-others must stop if the user cancels the unsaved-changes dialog. Do not recreate a tab inside the loop.
 - TUI F5 must use `Application.run_in_terminal(...)`. `suspend_to_background()` / `resume()` are not portable (Windows).
 - Empty Enter in the console `>>>` bar should send a newline to a running process.
-- Config lives in `~/.astraedit_config.json` (`recent_files`, `language`, `autosave`). Merge updates; do not wipe other keys.
+- Config lives in `~/.astraedit_config.json`. Merge updates; do not wipe other keys. Known keys include `recent_files`, `language`, `autosave`, `font_size`, `tab_size`, `python_executable`, `show_explorer`, `session_files`.
 
 ## Docs
 
@@ -39,13 +39,15 @@ Thanks for helping. This repo is a small hybrid editor (Tkinter GUI + prompt_too
 Before a PR:
 
 ```bash
-python -m py_compile astraedit.py i18n.py Astraedit-4.5.py
+python -m py_compile astraedit.py i18n.py Astraedit-4.7.py
 python -m unittest discover -s tests -v
 python astraedit.py --help
 python astraedit.py --lang en --help
 ```
 
 If you change GUI behavior, click through: new tab, open, save, find, replace, F5 + `input()`, language switch, close-all with Cancel.
+
+If you change TUI behavior: `python astraedit.py --tui` must start, Ctrl+/ must not crash, and Ctrl+Q must leave a clear terminal.
 
 ## License
 

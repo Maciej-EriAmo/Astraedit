@@ -26,7 +26,7 @@ _ALIASES = {
 
 _STRINGS: Dict[str, Dict[str, str]] = {
     "en": {
-        "app_name": "AstraEdit 4.6",
+        "app_name": "AstraEdit 4.7",
         "untitled_file": "untitled.txt",
         "untitled_n": "untitled_{n}.txt",
         "status_ready": "Ready | F5: Run | F1: Help",
@@ -55,6 +55,35 @@ _STRINGS: Dict[str, Dict[str, str]] = {
         "search_limited": "Search limited to 2 MB",
         "readonly_title": "Read-only",
         "readonly_msg": "File opened in read-only mode.\n{path}",
+        "readonly_save": "This file is read-only. Use Save As to write a new copy.",
+        "reload_title": "File changed",
+        "reload_msg": "{name} changed on disk. Reload?",
+        "reload_modified": "{name} changed on disk and you have unsaved edits. Reload and lose your changes?",
+        "interpreter_title": "Python interpreter",
+        "interpreter_current": "Interpreter: {path}",
+        "interpreter_auto": "Auto-detect (venv, then AstraEdit Python)",
+        "menu_explorer": "Project explorer",
+        "menu_interpreter": "Python interpreter…",
+        "menu_interpreter_auto": "Use auto-detect interpreter",
+        "menu_zoom_in": "Zoom in (Ctrl+=)",
+        "menu_zoom_out": "Zoom out (Ctrl+-)",
+        "menu_zoom_reset": "Reset zoom (Ctrl+0)",
+        "menu_snippets": "Snippets ▸",
+        "menu_comment": "Toggle comment (Ctrl+/)",
+        "dlg_match_case": "Match case",
+        "dlg_whole_word": "Whole word",
+        "explorer_title": "Explorer",
+        "snippet_def": "def function",
+        "snippet_class": "class",
+        "snippet_ifmain": "if __name__ == '__main__'",
+        "snippet_try": "try / except",
+        "snippet_for": "for loop",
+        "snippet_main": "main() skeleton",
+        "running_with": "Running: {name}  ({python})",
+        "sc_comment": "Toggle comment",
+        "sc_zoom": "Zoom in / out / reset",
+        "sc_next_tab": "Next / previous tab",
+        "sc_complete": "Complete word from buffer",
         "error": "Error",
         "info": "Info",
         "run_only_python": "F5 runs Python files only (.py, .pyw). Other files stay in the editor.",
@@ -163,6 +192,7 @@ _STRINGS: Dict[str, Dict[str, str]] = {
             "- Bracket matching\n"
             "- Draft auto-save every 30s (does not overwrite the original)\n"
             "- Binary files are not overwritten as text\n"
+            "- Project explorer, snippets, venv-aware F5\n"
             "- English / Polish interface\n"
             "- Dark theme\n\n"
             "Author: Maciej Mazur\n"
@@ -177,7 +207,7 @@ _STRINGS: Dict[str, Dict[str, str]] = {
         "cli_lang_saved": "Language set to {lang}",
     },
     "pl": {
-        "app_name": "AstraEdit 4.6",
+        "app_name": "AstraEdit 4.7",
         "untitled_file": "notatka.txt",
         "untitled_n": "notatka_{n}.txt",
         "status_ready": "Gotowy | F5: Uruchom | F1: Pomoc",
@@ -206,6 +236,35 @@ _STRINGS: Dict[str, Dict[str, str]] = {
         "search_limited": "Szukanie ograniczone do 2 MB",
         "readonly_title": "Tylko odczyt",
         "readonly_msg": "Plik otwarty w trybie tylko do odczytu.\n{path}",
+        "readonly_save": "Plik jest tylko do odczytu. Użyj Zapisz jako, aby zapisać kopię.",
+        "reload_title": "Plik się zmienił",
+        "reload_msg": "{name} zmienił się na dysku. Wczytać ponownie?",
+        "reload_modified": "{name} zmienił się na dysku, a masz niezapisane zmiany. Wczytać ponownie i odrzucić edycje?",
+        "interpreter_title": "Interpreter Pythona",
+        "interpreter_current": "Interpreter: {path}",
+        "interpreter_auto": "Wykrywaj automatycznie (venv, potem Python AstraEdita)",
+        "menu_explorer": "Eksplorator projektu",
+        "menu_interpreter": "Interpreter Pythona…",
+        "menu_interpreter_auto": "Automatyczny interpreter",
+        "menu_zoom_in": "Powiększ (Ctrl+=)",
+        "menu_zoom_out": "Pomniejsz (Ctrl+-)",
+        "menu_zoom_reset": "Resetuj powiększenie (Ctrl+0)",
+        "menu_snippets": "Snippety ▸",
+        "menu_comment": "Komentarz (Ctrl+/)",
+        "dlg_match_case": "Rozróżniaj wielkość liter",
+        "dlg_whole_word": "Całe słowo",
+        "explorer_title": "Eksplorator",
+        "snippet_def": "def funkcja",
+        "snippet_class": "class",
+        "snippet_ifmain": "if __name__ == '__main__'",
+        "snippet_try": "try / except",
+        "snippet_for": "pętla for",
+        "snippet_main": "szkielet main()",
+        "running_with": "Uruchamianie: {name}  ({python})",
+        "sc_comment": "Włącz/wyłącz komentarz",
+        "sc_zoom": "Powiększ / pomniejsz / reset",
+        "sc_next_tab": "Następna / poprzednia karta",
+        "sc_complete": "Uzupełnij słowo z bufora",
         "error": "Błąd",
         "info": "Info",
         "run_only_python": "F5 uruchamia tylko pliki Pythona (.py, .pyw). Inne zostają w edytorze.",
@@ -314,6 +373,7 @@ _STRINGS: Dict[str, Dict[str, str]] = {
             "- Dopasowanie nawiasów\n"
             "- Szkic auto-zapisu co 30 s (nie nadpisuje oryginału)\n"
             "- Pliki binarne nie są nadpisywane jako tekst\n"
+            "- Eksplorator projektu, snippety, F5 z venv\n"
             "- Interfejs angielski / polski\n"
             "- Ciemny motyw\n\n"
             "Autor: Maciej Mazur\n"

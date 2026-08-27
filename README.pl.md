@@ -1,6 +1,6 @@
-# AstraEdit 4.6 — edytor + konsola Pythona
+# AstraEdit 4.7 — edytor + konsola Pythona
 
-[![Version](https://img.shields.io/badge/version-4.6-blue)](https://github.com/Maciej-EriAmo/Astraedit)
+[![Version](https://img.shields.io/badge/version-4.7-blue)](https://github.com/Maciej-EriAmo/Astraedit)
 [![Python](https://img.shields.io/badge/python-3.7+-green)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-orange)](LICENSE)
 
@@ -14,30 +14,38 @@ Hybrydowy edytor tekstu w Pythonie. Działa jako **GUI** (Tkinter) albo **TUI** 
 
 ### Interfejs
 - **Dwa tryby**: GUI (Tkinter) i TUI (terminal)
-- **Karty (GUI)**: wiele plików; × w tytule karty to pole kliknięcia
+- **Karty (GUI)**: wiele plików; × w tytule karty to pole kliknięcia. PPM i środkowy przycisk dotyczą tej karty. Ctrl+Tab przełącza.
+- **Eksplorator projektu (GUI)**: drzewo katalogu roboczego; znaczniki Git porcelain gdy jest `.git`
 - **Ciemny motyw**: kolory w stylu VS Code
-- **Podział (GUI)**: edytor + konsola uruchamiania
+- **Podział (GUI)**: eksplorator + edytor + konsola
 - **Polski / angielski**: `--lang pl|en`, Widok → Język, albo `ASTRAEDIT_LANG`
+- **Powiększenie (GUI)**: Ctrl+= / Ctrl+- / Ctrl+0 albo Ctrl+kółko
 
 ### Edycja
 - Kolorowanie składni (Pygments; pełne do 500 KB, potem okno widoczne, wyłączone powyżej 5 MB)
 - Numeracja linii (szerokość rośnie z plikiem). Bez zawijania wierszy — długie linie mają poziomy scroll.
+- Auto-wcięcie po Enter (dodatkowy poziom po `:`); Tab = 4 spacje; Shift+Tab zmniejsza wcięcie
+- Snippety: Tab na `def`, `class`, `try`, `for`, `ifmain`, `main` (albo Edycja → Snippety)
+- Komentarz (Ctrl+/)
+- Uzupełnianie słowa z bieżącego bufora (Ctrl+Space)
 - Dopasowanie nawiasów (`()` `[]` `{}`; pomija stringi i komentarze; `<`/`>` to operatory)
 - Cofnij / Ponów
-- Szkic auto-zapisu co 30 s (`.astraedit/autosave/*.autosave` obok pliku; Ctrl+S zapisuje oryginał)
+- Szkic auto-zapisu co 30 s (`.astraedit/autosave/*.autosave` obok pliku; Ctrl+S zapisuje oryginał). Nowszy szkic jest oferowany także dla niezapisanej notatki.
 
 ### Wyszukiwanie
 - Znajdź i zamień, w tym wyrażenia regularne
 - Znajdź następny (F3) — to nie jest szukanie w trakcie pisania
-- Domyślnie bez rozróżniania wielkości liter
+- Domyślnie bez rozróżniania wielkości liter; opcjonalnie „rozróżniaj” i „całe słowo”
 - Przejdź do linii (Ctrl+G)
 
 ### Uruchamianie
 - **Tylko Python** (`.py`, `.pyw`). Inne pliki zostają w edytorze; F5 mówi dlaczego
+- Interpreter: najbliższy `.venv`/`venv` w górę od pliku, inaczej Python AstraEdita. Zmiana: Uruchom → Interpreter Pythona
 - Konsola GUI: stdin / stdout / stderr; `>>>` (pusty Enter wysyła nową linię)
 - STOP najpierw kończy proces, potem zabija drzewo, jeśli nadal działa
 - Kolory: zielony stdin, czerwony stderr, niebieski status
 - F5 najpierw zapisuje, potem uruchamia
+- Pytanie o ponowne wczytanie, gdy plik zmieni się na dysku
 
 ### Bezpieczeństwo
 - Wykrywanie plików binarnych (bajt NUL w pierwszym 1 KB); taki plik nie jest zapisywany z powrotem jako tekst
@@ -50,6 +58,7 @@ Hybrydowy edytor tekstu w Pythonie. Działa jako **GUI** (Tkinter) albo **TUI** 
 ### Pliki
 - 10 ostatnio otwartych
 - Otwieranie wielu plików naraz
+- Przywracanie sesji (pliki, które nadal są na dysku) przy starcie bez ścieżek
 - Menu kontekstowe karty: zamknij / zamknij inne / zamknij wszystko
 
 ---
@@ -89,7 +98,7 @@ python astraedit.py --lang pl
 python astraedit.py --lang en
 ```
 
-Stary launcher `Astraedit-4.5.py` nadal działa — wywołuje `astraedit.py`.
+Launcher zgodności `Astraedit-4.7.py` nadal działa — wywołuje `astraedit.py`.
 
 Zmienna środowiskowa: `ASTRAEDIT_LANG=pl` albo `en`.
 
@@ -114,7 +123,7 @@ Tłumaczenia są w `i18n.py`.
 
 ## Licencja
 
-MIT — zobacz [LICENSE](LICENSE). Copyright (c) 2025 Maciej Mazur.
+MIT — zobacz [LICENSE](LICENSE). Copyright (c) 2025-2026 Maciej Mazur.
 
 ## Autor
 

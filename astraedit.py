@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""AstraEdit 4.6 — hybrid GUI/TUI editor with an interactive console."""
+"""AstraEdit 4.7 — hybrid GUI/TUI editor with an interactive console."""
 
 from __future__ import annotations
 
@@ -14,11 +14,10 @@ import subprocess
 import sys
 import tempfile
 import threading
-from time import time
 
 from i18n import detect_lang, get_lang, set_lang, t
 
-VERSION = "4.6"
+VERSION = "4.7"
 APP_NAME = "AstraEdit " + VERSION
 CONFIG_FILE = pathlib.Path.home() / ".astraedit_config.json"
 PYTHON_SUFFIXES = (".py", ".pyw")
@@ -30,6 +29,9 @@ HL_DEFER_BYTES = 2 * 1024 * 1024
 HL_OFF_BYTES = 5 * 1024 * 1024
 MAX_REGEX_CHARS = 2 * 1024 * 1024
 BRACKET_SCAN_LIMIT = 2000
+DEFAULT_TAB_SIZE = 4
+DEFAULT_FONT_SIZE = 11
+WATCH_INTERVAL_MS = 1500
 TOKEN_TAG_RULES = (
     ("Keyword", "Keyword"),
     ("Comment", "Comment"),
@@ -39,6 +41,45 @@ TOKEN_TAG_RULES = (
     ("Operator", "Operator"),
     ("Punctuation", "Punctuation"),
     ("Name", "Name"),
+)
+MONO_FONT_CANDIDATES = (
+    "Cascadia Mono",
+    "Consolas",
+    "DejaVu Sans Mono",
+    "Menlo",
+    "Monaco",
+    "Liberation Mono",
+    "Courier New",
+)
+EXPLORER_SKIP = {
+    ".git",
+    ".astraedit",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "node_modules",
+    ".idea",
+    ".vs",
+    ".mypy_cache",
+    ".pytest_cache",
+}
+_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_SNIPPET_FIELD = re.compile(r"\$\{(\d+)(?::([^}]*))?\}")
+SNIPPETS = {
+    "def": "def ${1:name}(${2}):\n    ${3:pass}",
+    "class": "class ${1:Name}:\n    def __init__(self${2}):\n        ${3:pass}",
+    "ifmain": 'if __name__ == "__main__":\n    ${1:main()}',
+    "try": "try:\n    ${1:pass}\nexcept ${2:Exception} as ${3:err}:\n    ${4:raise}",
+    "for": "for ${1:item} in ${2:items}:\n    ${3:pass}",
+    "main": 'def main():\n    ${1:pass}\n\n\nif __name__ == "__main__":\n    main()\n',
+}
+SNIPPET_MENU = (
+    ("snippet_def", "def"),
+    ("snippet_class", "class"),
+    ("snippet_ifmain", "ifmain"),
+    ("snippet_try", "try"),
+    ("snippet_for", "for"),
+    ("snippet_main", "main"),
 )
 
 # ---- Config ----
@@ -70,11 +111,188 @@ def save_config(updates):
 # ---- Diagnostics ----
 def print_status(msg, kind="info"):
     symbols = {"info": "ℹ", "success": "✔", "error": "✖", "warn": "⚠"}
-    print(f"{symbols.get(kind, '?')} {msg}")
+    line = "%s %s" % (symbols.get(kind, "?"), msg)
+    try:
+        print(line)
+    except UnicodeEncodeError:
+        print(line.encode("ascii", "replace").decode("ascii"))
+
+
+def clear_terminal():
+    """Leave a blank screen after the TUI so the shell prompt is not mixed with the editor."""
+    try:
+        sys.stdout.write("\033[?1049l\033[?25h\033[0m\033[2J\033[3J\033[H")
+        sys.stdout.flush()
+    except Exception:
+        pass
+    try:
+        os.system("cls" if os.name == "nt" else "clear")
+    except OSError:
+        pass
 
 
 def is_python_source(path):
     return str(path).lower().endswith(PYTHON_SUFFIXES)
+
+
+def file_mtime(path):
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return None
+
+
+def expand_snippet(body):
+    """Replace ${n:default} fields; return (text, first_placeholder)."""
+    first = {"value": None}
+
+    def repl(match):
+        value = match.group(2) if match.group(2) is not None else ""
+        if first["value"] is None and value:
+            first["value"] = value
+        return value
+
+    return _SNIPPET_FIELD.sub(repl, body), first["value"] or ""
+
+
+def leading_ws(line):
+    i = 0
+    n = len(line)
+    while i < n and line[i] in " \t":
+        i += 1
+    return line[:i]
+
+
+def next_line_indent(line, tab_size=DEFAULT_TAB_SIZE, use_spaces=True):
+    """Indent for the line inserted after Enter. Colon at the end adds one level."""
+    stripped = line.strip()
+    ws = leading_ws(line)
+    if stripped.endswith(":") and not stripped.startswith("#"):
+        extra = (" " * tab_size) if use_spaces else "\t"
+        return ws + extra
+    return ws
+
+
+def toggle_hash_comments(lines):
+    """Comment or uncomment a block of lines with '# '. Returns (new_lines, uncommented)."""
+    nonempty = [ln for ln in lines if ln.strip()]
+    if nonempty and all(ln.lstrip().startswith("#") for ln in nonempty):
+        out = []
+        for ln in lines:
+            if not ln.strip():
+                out.append(ln)
+                continue
+            stripped = ln.lstrip()
+            ws = ln[: len(ln) - len(stripped)]
+            if stripped.startswith("# "):
+                out.append(ws + stripped[2:])
+            elif stripped.startswith("#"):
+                out.append(ws + stripped[1:])
+            else:
+                out.append(ln)
+        return out, True
+    out = []
+    for ln in lines:
+        if not ln.strip():
+            out.append(ln)
+            continue
+        stripped = ln.lstrip()
+        ws = ln[: len(ln) - len(stripped)]
+        out.append(ws + "# " + stripped)
+    return out, False
+
+
+def buffer_completions(text, prefix, limit=40):
+    if not prefix:
+        return []
+    seen = []
+    found = set()
+    for match in _IDENT_RE.finditer(text):
+        word = match.group(0)
+        if word != prefix and word.startswith(prefix) and word not in found:
+            found.add(word)
+            seen.append(word)
+            if len(seen) >= limit:
+                break
+    seen.sort(key=str.lower)
+    return seen
+
+
+def detect_venv_python(start_path):
+    folder = pathlib.Path(start_path)
+    if folder.is_file():
+        folder = folder.parent
+    seen = set()
+    relative = (
+        (".venv", "Scripts", "python.exe"),
+        (".venv", "bin", "python"),
+        ("venv", "Scripts", "python.exe"),
+        ("venv", "bin", "python"),
+    )
+    for _ in range(8):
+        key = str(folder)
+        if key in seen:
+            break
+        seen.add(key)
+        for parts in relative:
+            candidate = folder.joinpath(*parts)
+            if candidate.is_file():
+                return str(candidate)
+        parent = folder.parent
+        if parent == folder:
+            break
+        folder = parent
+    return None
+
+
+def resolve_python_executable(file_path, configured=None):
+    if configured:
+        return configured
+    found = detect_venv_python(file_path) if file_path else None
+    return found or sys.executable
+
+
+def windows_dpi_aware():
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
+
+def git_status_map(root):
+    """path -> porcelain XY (best-effort; empty if git is missing)."""
+    git_dir = pathlib.Path(root) / ".git"
+    if not git_dir.exists():
+        return {}
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+    try:
+        completed = subprocess.run(
+            ["git", "status", "--porcelain", "-u"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+            creationflags=flags,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    mapping = {}
+    for line in completed.stdout.splitlines():
+        if len(line) < 4:
+            continue
+        rel = line[3:]
+        if " -> " in rel:
+            rel = rel.split(" -> ", 1)[-1]
+        mapping[os.path.normpath(os.path.join(root, rel))] = line[:2].strip()
+    return mapping
 
 
 def next_untitled_name(open_paths, exists=os.path.exists):
@@ -201,8 +419,9 @@ class ProcessManager:
             self.state = PROC_IDLE
 
 
-def popen_script(file_path):
+def popen_script(file_path, python_exe=None):
     """Start a Python file. Callers keep the returned Popen, not a shared slot."""
+    exe = python_exe or sys.executable
     popen_kw = {
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
@@ -217,7 +436,7 @@ def popen_script(file_path):
         popen_kw["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
         popen_kw["start_new_session"] = True
-    return subprocess.Popen([sys.executable, "-u", str(file_path)], **popen_kw)
+    return subprocess.Popen([exe, "-u", str(file_path)], **popen_kw)
 
 
 # ---- Shared I/O ----
@@ -310,12 +529,11 @@ def write_text_file(path, text, encoding="utf-8", newline=NEWLINE_LF):
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(tmp_name, dest)
-    except Exception as err:
+    except Exception:
         try:
             os.unlink(tmp_name)
         except OSError:
             pass
-        print_status(t("write_error", path=path, err=err), "error")
         raise
 
 
@@ -432,14 +650,17 @@ def find_matching_bracket(text, start, direction, self_ch, other_ch, mask, max_c
 class SearchPattern:
     """Unified literal / regex find-replace."""
 
-    def __init__(self, pattern, use_regex):
+    def __init__(self, pattern, use_regex, ignore_case=True, whole_word=False):
         self.pattern = pattern
         self.use_regex = bool(use_regex)
+        self.ignore_case = bool(ignore_case)
+        self.whole_word = bool(whole_word)
+        flags = re.IGNORECASE if self.ignore_case else 0
         try:
-            if self.use_regex:
-                self.compiled = re.compile(pattern, re.IGNORECASE)
-            else:
-                self.compiled = re.compile(re.escape(pattern), re.IGNORECASE)
+            body = pattern if self.use_regex else re.escape(pattern)
+            if self.whole_word:
+                body = r"\b(?:%s)\b" % body
+            self.compiled = re.compile(body, flags)
         except re.error as err:
             raise ValueError(str(err)) from err
 
@@ -447,7 +668,13 @@ class SearchPattern:
         return self.compiled.search(text, start)
 
     def replace_in(self, text, repl, count=0):
-        return self.compiled.subn(repl, text, count=count)
+        if self.use_regex:
+            return self.compiled.subn(repl, text, count=count)
+
+        def _literal(_match, replacement=repl):
+            return replacement
+
+        return self.compiled.subn(_literal, text, count=count)
 
 
 def search_window(text, start, use_regex):
@@ -567,6 +794,7 @@ try:
     from prompt_toolkit.widgets import TextArea, Frame, Dialog, Button, Label, SearchToolbar
     from prompt_toolkit.lexers import PygmentsLexer
     from prompt_toolkit.shortcuts.dialogs import yes_no_dialog
+    from prompt_toolkit.filters import has_focus
     from prompt_toolkit.styles import Style
 
     try:
@@ -619,6 +847,19 @@ class AstraEditTUI(DocumentView):
                     self.status_pending = t(
                         "autosave_hint", name=pathlib.Path(draft).name
                     )
+        else:
+            draft = newer_autosave(self.file_path)
+            if draft is not None:
+                try:
+                    self.doc = Document.open(str(draft))
+                    self.doc.path = resolve_doc_path(self.file_path)
+                    self.doc.modified = True
+                    initial_text = self.doc.text
+                    self.status_pending = t(
+                        "autosave_hint", name=pathlib.Path(draft).name
+                    )
+                except (OSError, UnicodeError, ValueError):
+                    pass
 
         self.editor = TextArea(
             text=initial_text,
@@ -694,6 +935,43 @@ class AstraEditTUI(DocumentView):
         @kb.add("f8")
         def _(event):
             self.toggle_language()
+
+        editor_focus = has_focus(self.editor.buffer)
+
+        @kb.add("enter", filter=editor_focus)
+        def _(event):
+            buf = self.editor.buffer
+            line = buf.document.current_line_before_cursor
+            buf.insert_text("\n" + next_line_indent(line))
+
+        @kb.add("tab", filter=editor_focus)
+        def _(event):
+            buf = self.editor.buffer
+            before = buf.document.current_line_before_cursor
+            i = len(before)
+            while i > 0 and (before[i - 1].isalnum() or before[i - 1] == "_"):
+                i -= 1
+            word = before[i:]
+            snippet = SNIPPETS.get(word)
+            if snippet and (i == 0 or before[i - 1] in " \t"):
+                buf.delete_before_cursor(count=len(word))
+                expanded, _first = expand_snippet(snippet)
+                buf.insert_text(expanded)
+                return
+            buf.insert_text(" " * DEFAULT_TAB_SIZE)
+
+        # Terminals send Ctrl+/ as ASCII 0x1F (prompt_toolkit: c-_). There is no c-slash.
+        @kb.add("c-_", filter=editor_focus, eager=True)
+        def _(event):
+            buf = self.editor.buffer
+            doc = buf.document
+            row = doc.cursor_position_row
+            line = doc.current_line
+            new_line = toggle_hash_comments([line])[0][0]
+            start = doc.translate_row_col_to_index(row, 0)
+            buf.cursor_position = start + len(line)
+            buf.delete_before_cursor(count=len(line))
+            buf.insert_text(new_line)
 
         return kb
 
@@ -805,8 +1083,9 @@ class AstraEditTUI(DocumentView):
             print(f"\n{'=' * 60}")
             print(f"  {t('running', name=name)}")
             print(f"{'=' * 60}\n")
+            exe = resolve_python_executable(self.file_path)
             completed = subprocess.run(
-                [sys.executable, self.file_path],
+                [exe, "-u", self.file_path],
                 cwd=str(pathlib.Path(self.file_path).parent),
             )
             print(f"\n{'=' * 60}")
@@ -829,14 +1108,17 @@ class AstraEditTUI(DocumentView):
         layout = Layout(
             FloatContainer(HSplit([self.frame, self.search_field, self.footer]), floats=[])
         )
-        Application(
-            layout=layout,
-            key_bindings=self.kb,
-            full_screen=True,
-            mouse_support=True,
-            style=style,
-            clipboard=tui_clipboard,
-        ).run()
+        try:
+            Application(
+                layout=layout,
+                key_bindings=self.kb,
+                full_screen=True,
+                mouse_support=True,
+                style=style,
+                clipboard=tui_clipboard,
+            ).run()
+        finally:
+            clear_terminal()
 
 
 # ==========================================
@@ -844,7 +1126,7 @@ class AstraEditTUI(DocumentView):
 # ==========================================
 try:
     import tkinter as tk
-    from tkinter import filedialog, messagebox, scrolledtext, ttk
+    from tkinter import filedialog, font as tkfont, messagebox, scrolledtext, ttk
 except ImportError:
     tk = None
 
@@ -855,9 +1137,12 @@ class EditorTab(DocumentView):
     def __init__(self, parent, file_path, app):
         self.app = app
         self.doc = Document.blank(file_path)
-        self.last_update = 0
         self._ln_count = -1
         self._ln_width = 0
+        self._hl_job = None
+        self._lexer = None
+        self._lexer_key = None
+        self.disk_mtime = None
 
         self.frame = tk.Frame(parent, bg=app.bg_color)
 
@@ -873,7 +1158,7 @@ class EditorTab(DocumentView):
             bg=app.line_num_bg,
             fg=app.line_num_fg,
             state="disabled",
-            font=("Consolas", 11),
+            font=app.editor_font,
         )
         self.line_numbers.pack(side="left", fill="y")
 
@@ -891,8 +1176,9 @@ class EditorTab(DocumentView):
             fg=app.fg_color,
             insertbackground=app.cursor_color,
             selectbackground=app.selection_color,
-            font=("Consolas", 11),
+            font=app.editor_font,
             border=0,
+            tabs=app.tab_pixels,
         )
         self.text_area.pack(side="top", fill="both", expand=True)
         self.hscroll.config(command=self.text_area.xview)
@@ -919,6 +1205,12 @@ class EditorTab(DocumentView):
         self.text_area.bind("<KeyRelease>", self.on_key_release_combined)
         self.text_area.bind("<Button-1>", lambda e: self.app.root.after(10, self.update_combined))
         self.text_area.bind("<<Paste>>", lambda e: self.app.root.after(20, self._after_paste), add="+")
+        self.text_area.bind("<Return>", self.on_return)
+        self.text_area.bind("<Tab>", self.on_tab_key)
+        self.text_area.bind("<ISO_Left_Tab>", self.on_shift_tab)
+        self.text_area.bind("<Shift-Tab>", self.on_shift_tab)
+        self.text_area.bind("<Control-slash>", self.toggle_comment)
+        self.text_area.bind("<Control-space>", self.autocomplete)
         for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
             self.text_area.bind(seq, lambda e: self.app.root.after_idle(self.update_line_numbers), add="+")
 
@@ -926,40 +1218,47 @@ class EditorTab(DocumentView):
 
     def load_file(self):
         path = self.file_path
-        if os.path.exists(path):
-            try:
-                if is_binary_file(path):
-                    messagebox.showerror(t("error"), t("binary_open", path=path))
-                    return False
+        exists = os.path.exists(path)
+        if exists and is_binary_file(path):
+            messagebox.showerror(t("error"), t("binary_open", path=path))
+            return False
 
-                draft = newer_autosave(path)
-                restored = False
-                if draft is not None and messagebox.askyesno(
-                    t("autosave_title"),
-                    t("autosave_restore", name=pathlib.Path(path).name),
-                ):
-                    self.doc = Document.open(str(draft))
-                    self.doc.path = resolve_doc_path(path)
-                    self.doc.modified = True
-                    restored = True
-                else:
-                    self.doc = Document.open(path)
-
-                self.text_area.insert("1.0", self.doc.text)
-                self.update_syntax_highlighting(force=True)
+        draft = newer_autosave(path)
+        try:
+            restored = False
+            if draft is not None and messagebox.askyesno(
+                t("autosave_title"),
+                t("autosave_restore", name=pathlib.Path(path).name),
+            ):
+                self.doc = Document.open(str(draft))
+                self.doc.path = resolve_doc_path(path)
+                self.doc.modified = True
+                restored = True
+            elif exists:
+                self.doc = Document.open(path)
+            else:
+                self.disk_mtime = None
+                self.update_line_numbers()
                 self.text_area.edit_modified(False)
-                if not restored:
-                    self.is_modified = False
+                self.is_modified = False
+                return True
 
-                if self.doc.readonly:
-                    self.text_area.config(state="disabled")
-                    messagebox.showwarning(
-                        t("readonly_title"), t("readonly_msg", path=path)
-                    )
-            except (OSError, UnicodeError, ValueError) as e:
-                messagebox.showerror(t("error"), t("load_error", err=e))
-                return False
+            self.text_area.insert("1.0", self.doc.text)
+            self.update_syntax_highlighting(force=True)
+            self.text_area.edit_modified(False)
+            if not restored:
+                self.is_modified = False
 
+            if self.doc.readonly:
+                self.text_area.config(state="disabled")
+                messagebox.showwarning(
+                    t("readonly_title"), t("readonly_msg", path=path)
+                )
+        except (OSError, UnicodeError, ValueError) as e:
+            messagebox.showerror(t("error"), t("load_error", err=e))
+            return False
+
+        self.disk_mtime = file_mtime(self.file_path)
         self.update_line_numbers()
         self.text_area.edit_modified(False)
         if not self.doc.modified:
@@ -977,29 +1276,194 @@ class EditorTab(DocumentView):
                 self.app.update_tab_title(self)
             self.text_area.edit_modified(False)
 
-    def _approx_size(self):
-        lines = int(self.text_area.index("end-1c").split(".")[0])
-        return lines * 64
+    def _char_count(self):
+        try:
+            counted = self.text_area.count("1.0", "end-1c", "chars")
+            if counted is None:
+                return 0
+            return int(counted[0] if isinstance(counted, tuple) else counted)
+        except (tk.TclError, TypeError, ValueError):
+            return 0
+
+    def cached_lexer(self):
+        if not get_lexer_for_filename:
+            return None
+        if self._lexer is not None and self._lexer_key == self.file_path:
+            return self._lexer
+        self._lexer = get_best_lexer(self.file_path)
+        self._lexer_key = self.file_path
+        return self._lexer
+
+    def invalidate_lexer(self):
+        self._lexer = None
+        self._lexer_key = None
+
+    def schedule_highlight(self, force=False):
+        if self._hl_job is not None:
+            try:
+                self.app.root.after_cancel(self._hl_job)
+            except tk.TclError:
+                pass
+            self._hl_job = None
+        if force:
+            self.update_syntax_highlighting(force=True)
+            return
+        _mode, delay = highlight_policy(self._char_count())
+        try:
+            self._hl_job = self.app.root.after(int(delay * 1000), self._hl_fire)
+        except tk.TclError:
+            self._hl_job = None
+
+    def _hl_fire(self):
+        self._hl_job = None
+        self.update_syntax_highlighting()
 
     def on_key_release_combined(self, event=None):
         self.update_line_numbers()
         self.app.update_cursor_position()
         self.highlight_matching_bracket()
-
-        now = time()
-        _mode, delay = highlight_policy(self._approx_size())
-        if now - self.last_update > delay:
-            self.update_syntax_highlighting()
-            self.last_update = now
+        self.schedule_highlight()
 
     def update_combined(self):
         self.update_line_numbers()
         self.app.update_cursor_position()
+        self.highlight_matching_bracket()
 
     def _after_paste(self):
         self.update_line_numbers()
-        self.update_syntax_highlighting()
+        self.schedule_highlight(force=True)
         self.app.update_cursor_position()
+        self.highlight_matching_bracket()
+
+    def apply_font(self, font, tab_pixels):
+        self.text_area.configure(font=font, tabs=tab_pixels)
+        self.line_numbers.configure(font=font)
+
+    def on_return(self, event=None):
+        text = self.text_area
+        before = text.get("insert linestart", "insert")
+        text.insert("insert", "\n" + next_line_indent(before, self.app.tab_size, self.app.use_spaces))
+        self.update_line_numbers()
+        return "break"
+
+    def _word_before_cursor(self):
+        before = self.text_area.get("insert linestart", "insert")
+        i = len(before)
+        while i > 0 and (before[i - 1].isalnum() or before[i - 1] == "_"):
+            i -= 1
+        return before[i:], i
+
+    def on_tab_key(self, event=None):
+        text = self.text_area
+        try:
+            text.index("sel.first")
+            return self._indent_selection(1)
+        except tk.TclError:
+            pass
+        word, col = self._word_before_cursor()
+        snippet = SNIPPETS.get(word)
+        before = text.get("insert linestart", "insert")
+        if snippet and (col == 0 or before[col - 1] in " \t"):
+            start = "%s linestart + %dc" % (tk.INSERT, col)
+            text.delete(start, tk.INSERT)
+            ins = text.index(tk.INSERT)
+            expanded, first = expand_snippet(snippet)
+            text.insert(tk.INSERT, expanded)
+            if first:
+                loc = text.search(first, ins, stopindex=tk.INSERT)
+                if loc:
+                    text.tag_remove("sel", "1.0", tk.END)
+                    text.tag_add("sel", loc, "%s+%dc" % (loc, len(first)))
+                    text.mark_set(tk.INSERT, "%s+%dc" % (loc, len(first)))
+            self.update_line_numbers()
+            self.schedule_highlight(force=True)
+            return "break"
+        pad = (" " * self.app.tab_size) if self.app.use_spaces else "\t"
+        text.insert(tk.INSERT, pad)
+        return "break"
+
+    def on_shift_tab(self, event=None):
+        return self._indent_selection(-1)
+
+    def _indent_selection(self, direction):
+        text = self.text_area
+        try:
+            start_line = int(text.index("sel.first").split(".")[0])
+            end_index = text.index("sel.last")
+            end_line = int(end_index.split(".")[0])
+            if end_index.split(".")[1] == "0":
+                end_line -= 1
+        except tk.TclError:
+            start_line = end_line = int(text.index(tk.INSERT).split(".")[0])
+        pad = " " * self.app.tab_size
+        text.edit_separator()
+        for line in range(start_line, end_line + 1):
+            if direction > 0:
+                text.insert("%d.0" % line, pad)
+            else:
+                got = text.get("%d.0" % line, "%d.%d" % (line, self.app.tab_size))
+                if got.startswith(pad):
+                    text.delete("%d.0" % line, "%d.%d" % (line, len(pad)))
+                elif got.startswith("\t"):
+                    text.delete("%d.0" % line, "%d.1" % line)
+                else:
+                    n = len(got) - len(got.lstrip(" "))
+                    if n:
+                        text.delete("%d.0" % line, "%d.%d" % (line, n))
+        self.update_line_numbers()
+        return "break"
+
+    def toggle_comment(self, event=None):
+        text = self.text_area
+        try:
+            start = text.index("sel.first linestart")
+            end = text.index("sel.last")
+            if end.endswith(".0"):
+                end = text.index("%s-1c" % end)
+            end = text.index("%s lineend" % end)
+        except tk.TclError:
+            start = text.index("insert linestart")
+            end = text.index("insert lineend")
+        block = text.get(start, end)
+        new_lines, _ = toggle_hash_comments(block.split("\n"))
+        text.edit_separator()
+        text.delete(start, end)
+        text.insert(start, "\n".join(new_lines))
+        self.update_line_numbers()
+        self.schedule_highlight(force=True)
+        return "break"
+
+    def insert_snippet(self, key):
+        body = SNIPPETS.get(key)
+        if not body:
+            return
+        text = self.text_area
+        expanded, first = expand_snippet(body)
+        ins = text.index(tk.INSERT)
+        text.insert(tk.INSERT, expanded)
+        if first:
+            loc = text.search(first, ins, stopindex=tk.INSERT)
+            if loc:
+                text.tag_remove("sel", "1.0", tk.END)
+                text.tag_add("sel", loc, "%s+%dc" % (loc, len(first)))
+                text.mark_set(tk.INSERT, "%s+%dc" % (loc, len(first)))
+        self.update_line_numbers()
+        self.schedule_highlight(force=True)
+
+    def autocomplete(self, event=None):
+        text = self.text_area
+        prefix, _col = self._word_before_cursor()
+        if not prefix:
+            return "break"
+        content = text.get("1.0", "end-1c")
+        words = buffer_completions(content, prefix)
+        if not words:
+            return "break"
+        if len(words) == 1:
+            text.insert(tk.INSERT, words[0][len(prefix):])
+            return "break"
+        self.app.show_completions(self, words, prefix)
+        return "break"
 
     def update_line_numbers(self):
         line_count = int(self.text_area.index("end-1c").split(".")[0])
@@ -1037,7 +1501,7 @@ class EditorTab(DocumentView):
             direction = 1
         else:
             return
-        lexer = get_best_lexer(self.file_path) if get_lexer_for_filename else None
+        lexer = self.cached_lexer()
         mask = code_char_mask(content, lexer, start)
         if not mask[start]:
             return
@@ -1078,12 +1542,12 @@ class EditorTab(DocumentView):
         if not get_lexer_for_filename:
             return
         content = self.text_area.get("1.0", "end-1c")
-        nbytes = len(content.encode("utf-8", errors="replace"))
+        nbytes = self._char_count()
         mode, _delay = highlight_policy(nbytes)
         if mode == "off":
             self._clear_syntax_tags()
             return
-        lexer = get_best_lexer(self.file_path)
+        lexer = self.cached_lexer()
         if lexer is None:
             return
         try:
@@ -1123,6 +1587,8 @@ class EditorTab(DocumentView):
         except OSError as e:
             messagebox.showerror(t("save_error_title"), str(e))
             return False
+        self.disk_mtime = file_mtime(self.file_path)
+        self.invalidate_lexer()
         self.app.update_tab_title(self)
         return True
 
@@ -1153,14 +1619,36 @@ class AstraEditGUI:
         self.console_bg = "#111111"
         self.console_fg = "#cccccc"
 
-        self.autosave_enabled = bool(load_config().get("autosave", True))
+        cfg = load_config()
+        self.autosave_enabled = bool(cfg.get("autosave", True))
         self.autosave_interval = 30000
+        self.tab_size = int(cfg.get("tab_size", DEFAULT_TAB_SIZE) or DEFAULT_TAB_SIZE)
+        self.use_spaces = bool(cfg.get("use_spaces", True))
+        self.font_size = int(cfg.get("font_size", DEFAULT_FONT_SIZE) or DEFAULT_FONT_SIZE)
+        self.python_executable = cfg.get("python_executable") or ""
+        self.show_explorer = bool(cfg.get("show_explorer", True))
+        self.ignore_case = bool(cfg.get("ignore_case", True))
+        self.whole_word = bool(cfg.get("whole_word", False))
+
+        families = set(tkfont.families(self.root))
+        self.mono_font = "TkFixedFont"
+        for name in MONO_FONT_CANDIDATES:
+            if name in families:
+                self.mono_font = name
+                break
+        self.editor_font = (self.mono_font, self.font_size)
+        self.tab_pixels = self._measure_tab_pixels()
 
         self.find_window = None
         self.find_entry = None
         self.regex_var = None
+        self.case_var = None
+        self.word_var = None
         self.last_search = ""
         self.use_regex = False
+        self._complete_win = None
+        self._reload_open = False
+        self.explorer_root = None
 
         self._tabs = []
         self.runner = ProcessManager()
@@ -1177,16 +1665,77 @@ class AstraEditGUI:
             if not self._tabs:
                 self.new_tab()
         else:
-            self.new_tab()
+            restored = False
+            for path in cfg.get("session_files") or []:
+                if os.path.isfile(path):
+                    self.open_file(path)
+                    restored = True
+            if not restored:
+                self.new_tab()
+            else:
+                idx = cfg.get("session_index", 0)
+                if isinstance(idx, int) and 0 <= idx < len(self._tabs):
+                    self.notebook.select(self._tabs[idx].frame)
 
+        self._set_explorer_root(os.getcwd())
         self.schedule_autosave()
         self.root.after(100, self.process_queue)
+        self.root.after(WATCH_INTERVAL_MS, self._watch_files)
+
+    def _measure_tab_pixels(self):
+        sample = tkfont.Font(root=self.root, font=(self.mono_font, self.font_size))
+        return sample.measure(" " * self.tab_size)
 
     def setup_ui(self):
-        self.paned_window = tk.PanedWindow(
-            self.root, orient=tk.VERTICAL, sashwidth=4, bg="#333333"
+        self.status_var = tk.StringVar(value=t("status_ready"))
+        self.status_bar = tk.Label(
+            self.root,
+            textvariable=self.status_var,
+            bg="#007acc",
+            fg="white",
+            anchor="w",
+            padx=5,
+            font=("Arial", 9),
         )
-        self.paned_window.pack(fill="both", expand=True)
+        self.status_bar.pack(side="bottom", fill="x")
+
+        self.hpaned = tk.PanedWindow(
+            self.root, orient=tk.HORIZONTAL, sashwidth=4, bg="#333333"
+        )
+        self.hpaned.pack(fill="both", expand=True)
+
+        self.explorer_frame = tk.Frame(self.hpaned, bg=self.line_num_bg, width=220)
+        exp_header = tk.Frame(self.explorer_frame, bg="#252526")
+        exp_header.pack(fill="x")
+        self.explorer_title = tk.Label(
+            exp_header,
+            text=t("explorer_title"),
+            bg="#252526",
+            fg="white",
+            font=("Arial", 9, "bold"),
+            anchor="w",
+        )
+        self.explorer_title.pack(side="left", padx=8, pady=4)
+
+        self.explorer_tree = ttk.Treeview(
+            self.explorer_frame, show="tree", selectmode="browse"
+        )
+        exp_scroll = ttk.Scrollbar(
+            self.explorer_frame, orient="vertical", command=self.explorer_tree.yview
+        )
+        self.explorer_tree.configure(yscrollcommand=exp_scroll.set)
+        exp_scroll.pack(side="right", fill="y")
+        self.explorer_tree.pack(side="left", fill="both", expand=True)
+        self.explorer_tree.bind("<<TreeviewOpen>>", self._on_explorer_open)
+        self.explorer_tree.bind("<Double-1>", self._on_explorer_activate)
+        self.explorer_tree.bind("<Return>", self._on_explorer_activate)
+
+        self.paned_window = tk.PanedWindow(
+            self.hpaned, orient=tk.VERTICAL, sashwidth=4, bg="#333333"
+        )
+        if self.show_explorer:
+            self.hpaned.add(self.explorer_frame, minsize=140, width=220)
+        self.hpaned.add(self.paned_window, stretch="always", minsize=320)
 
         editor_container = tk.Frame(self.paned_window, bg=self.bg_color)
         self.paned_window.add(editor_container, stretch="always", height=500)
@@ -1202,10 +1751,19 @@ class AstraEditGUI:
             borderwidth=0,
         )
         style.map("TNotebook.Tab", background=[("selected", "#007acc")])
+        style.configure(
+            "Treeview",
+            background=self.bg_color,
+            foreground=self.fg_color,
+            fieldbackground=self.bg_color,
+            borderwidth=0,
+        )
+        style.map("Treeview", background=[("selected", "#007acc")])
 
         self.notebook = ttk.Notebook(editor_container)
         self.notebook.pack(fill="both", expand=True)
         self.notebook.bind("<ButtonPress-1>", self.on_tab_click)
+        self.notebook.bind("<Button-2>", self.on_tab_middle_click)
 
         self.tab_context_menu = tk.Menu(self.root, tearoff=0, bg=self.bg_color, fg=self.fg_color)
         self.notebook.bind("<Button-3>", self.show_tab_context_menu)
@@ -1287,38 +1845,52 @@ class AstraEditGUI:
         )
         self.input_entry.pack(side="left", fill="x", expand=True, padx=5, pady=5)
         self.input_entry.bind("<Return>", self.send_input)
+        self.console_area.configure(font=(self.mono_font, max(9, self.font_size - 1)))
+        self.input_entry.configure(font=(self.mono_font, max(9, self.font_size - 1)))
 
-        self.status_var = tk.StringVar(value=t("status_ready"))
-        self.status_bar = tk.Label(
-            self.root,
-            textvariable=self.status_var,
-            bg="#007acc",
-            fg="white",
-            anchor="w",
-            padx=5,
-            font=("Arial", 9),
-        )
-        self.status_bar.pack(side="bottom", fill="x")
-
-    def on_tab_click(self, event):
+    def _tab_index_at(self, event):
         try:
-            clicked_tab = self.notebook.tk.call(
+            ident = self.notebook.tk.call(
                 self.notebook._w, "identify", "tab", event.x, event.y
             )
-            if clicked_tab == "":
-                return
+            if ident == "" or ident is None:
+                return None
+            return int(ident)
+        except (tk.TclError, ValueError, TypeError):
+            return None
 
-            x, y, width, height = self.notebook.bbox(clicked_tab)
-            if event.x > x + width - 25:
-                tabs = self.notebook.tabs()
-                idx = int(clicked_tab)
-                tab_frame = self.notebook.nametowidget(tabs[idx])
-                for tab in self._tabs:
-                    if tab.frame == tab_frame:
-                        self.close_tab(tab)
-                        break
-        except Exception:
-            pass
+    def _tab_from_index(self, idx):
+        tabs = self.notebook.tabs()
+        if idx < 0 or idx >= len(tabs):
+            return None
+        tab_frame = self.notebook.nametowidget(tabs[idx])
+        for tab in self._tabs:
+            if tab.frame == tab_frame:
+                return tab
+        return None
+
+    def on_tab_click(self, event):
+        idx = self._tab_index_at(event)
+        if idx is None:
+            return
+        try:
+            x, y, width, height = self.notebook.bbox(idx)
+        except tk.TclError:
+            return
+        if event.x > x + width - 25:
+            tab = self._tab_from_index(idx)
+            if tab:
+                self.close_tab(tab)
+            return "break"
+
+    def on_tab_middle_click(self, event):
+        idx = self._tab_index_at(event)
+        if idx is None:
+            return
+        tab = self._tab_from_index(idx)
+        if tab:
+            self.close_tab(tab)
+        return "break"
 
     def setup_menu(self):
         menubar = tk.Menu(self.root, bg=self.bg_color, fg=self.fg_color)
@@ -1344,11 +1916,23 @@ class AstraEditGUI:
         editmenu.add_command(label=t("menu_find"), command=self.show_find_dialog)
         editmenu.add_command(label=t("menu_replace"), command=self.show_replace_dialog)
         editmenu.add_command(label=t("menu_goto"), command=self.goto_line_dialog)
+        editmenu.add_separator()
+        editmenu.add_command(label=t("menu_comment"), command=self.toggle_comment_current)
+        snippet_menu = tk.Menu(editmenu, tearoff=0, bg=self.bg_color, fg=self.fg_color)
+        for key, snippet_id in SNIPPET_MENU:
+            snippet_menu.add_command(
+                label=t(key),
+                command=lambda sid=snippet_id: self.insert_snippet_current(sid),
+            )
+        editmenu.add_cascade(label=t("menu_snippets"), menu=snippet_menu)
         menubar.add_cascade(label=t("menu_edit"), menu=editmenu)
 
         runmenu = tk.Menu(menubar, tearoff=0, bg=self.bg_color, fg=self.fg_color)
         runmenu.add_command(label=f"▶ {t('menu_run_file')}", command=self.run_current_file)
         runmenu.add_command(label=f"⬛ {t('menu_stop')}", command=self.stop_process)
+        runmenu.add_separator()
+        runmenu.add_command(label=t("menu_interpreter"), command=self.choose_interpreter)
+        runmenu.add_command(label=t("menu_interpreter_auto"), command=self.use_auto_interpreter)
         runmenu.add_separator()
         runmenu.add_command(label=f"🗑 {t('menu_clear')}", command=self.clear_console)
         menubar.add_cascade(label=t("menu_run"), menu=runmenu)
@@ -1376,6 +1960,17 @@ class AstraEditGUI:
             command=lambda: self.change_language("pl"),
         )
         viewmenu.add_cascade(label=t("menu_language"), menu=langmenu)
+        viewmenu.add_separator()
+        self.explorer_var = tk.BooleanVar(value=self.show_explorer)
+        viewmenu.add_checkbutton(
+            label=t("menu_explorer"),
+            variable=self.explorer_var,
+            command=self.toggle_explorer,
+        )
+        viewmenu.add_separator()
+        viewmenu.add_command(label=t("menu_zoom_in"), command=self.zoom_in)
+        viewmenu.add_command(label=t("menu_zoom_out"), command=self.zoom_out)
+        viewmenu.add_command(label=t("menu_zoom_reset"), command=self.zoom_reset)
         menubar.add_cascade(label=t("menu_view"), menu=viewmenu)
 
         helpmenu = tk.Menu(menubar, tearoff=0, bg=self.bg_color, fg=self.fg_color)
@@ -1405,26 +2000,46 @@ class AstraEditGUI:
         self.console_title.config(text=f"📟 {t('console_title')}")
         self.clear_btn.config(text=f"🗑 {t('btn_clear')}")
         self.stop_btn.config(text=f"⬛ {t('btn_stop')}")
+        self.explorer_title.config(text=t("explorer_title"))
         self.update_cursor_position()
         if not self.get_current_tab():
             self.status_var.set(t("status_ready"))
 
+    def _bind(self, sequence, fn):
+        def handler(event):
+            fn()
+            return "break"
+
+        self.root.bind(sequence, handler)
+
     def setup_bindings(self):
-        self.root.bind("<Control-n>", lambda e: self.new_tab())
-        self.root.bind("<Control-o>", lambda e: self.open_file_dialog())
-        self.root.bind("<Control-s>", lambda e: self.save_current())
-        self.root.bind("<Control-Shift-S>", lambda e: self.save_all())
-        self.root.bind("<Control-Shift-s>", lambda e: self.save_all())
-        self.root.bind("<Control-w>", lambda e: self.close_current_tab())
-        self.root.bind("<F2>", lambda e: self.save_as())
-        self.root.bind("<F1>", lambda e: self.show_help())
-        self.root.bind("<F5>", lambda e: self.run_current_file())
-        self.root.bind("<Control-f>", lambda e: self.show_find_dialog())
-        self.root.bind("<Control-h>", lambda e: self.show_replace_dialog())
-        self.root.bind("<Control-g>", lambda e: self.goto_line_dialog())
-        self.root.bind("<F3>", lambda e: self.find_next())
-        self.root.bind("<Control-z>", lambda e: self.undo())
-        self.root.bind("<Control-y>", lambda e: self.redo())
+        self._bind("<Control-n>", self.new_tab)
+        self._bind("<Control-o>", self.open_file_dialog)
+        self._bind("<Control-s>", self.save_current)
+        self._bind("<Control-Shift-S>", self.save_all)
+        self._bind("<Control-Shift-s>", self.save_all)
+        self._bind("<Control-w>", self.close_current_tab)
+        self._bind("<F2>", self.save_as)
+        self._bind("<F1>", self.show_help)
+        self._bind("<F5>", self.run_current_file)
+        self._bind("<Control-f>", self.show_find_dialog)
+        self._bind("<Control-h>", self.show_replace_dialog)
+        self._bind("<Control-g>", self.goto_line_dialog)
+        self._bind("<F3>", self.find_next)
+        self._bind("<Control-z>", self.undo)
+        self._bind("<Control-y>", self.redo)
+        self._bind("<Control-Tab>", lambda: self.cycle_tab(1))
+        self._bind("<Control-Shift-Tab>", lambda: self.cycle_tab(-1))
+        self._bind("<Control-ISO_Left_Tab>", lambda: self.cycle_tab(-1))
+        self._bind("<Control-Next>", lambda: self.cycle_tab(1))
+        self._bind("<Control-Prior>", lambda: self.cycle_tab(-1))
+        self._bind("<Control-equal>", self.zoom_in)
+        self._bind("<Control-plus>", self.zoom_in)
+        self._bind("<Control-minus>", self.zoom_out)
+        self._bind("<Control-0>", self.zoom_reset)
+        self.root.bind("<Control-MouseWheel>", self._on_zoom_wheel)
+        self.root.bind("<Control-Button-4>", lambda e: self.zoom_in() or "break")
+        self.root.bind("<Control-Button-5>", lambda e: self.zoom_out() or "break")
 
         self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -1451,23 +2066,30 @@ class AstraEditGUI:
             return
 
         file_path = tab.file_path
+        configured = self.python_executable or None
+        exe = resolve_python_executable(file_path, configured)
 
         self.console_area.config(state="normal")
         self.console_area.delete("1.0", tk.END)
 
         self.log_to_console(f"{'=' * 60}\n", "info")
-        self.log_to_console(f"  {t('running', name=pathlib.Path(file_path).name)}\n", "info")
+        self.log_to_console(
+            f"  {t('running_with', name=pathlib.Path(file_path).name, python=exe)}\n",
+            "info",
+        )
         self.log_to_console(f"{'=' * 60}\n\n", "info")
 
         self.stop_btn.config(state="normal", bg="#ff3333")
         self.input_entry.focus()
 
-        threading.Thread(target=self._run_subprocess, args=(file_path,), daemon=True).start()
+        threading.Thread(
+            target=self._run_subprocess, args=(file_path, exe), daemon=True
+        ).start()
 
-    def _run_subprocess(self, file_path):
+    def _run_subprocess(self, file_path, python_exe=None):
         proc = None
         try:
-            proc = popen_script(file_path)
+            proc = popen_script(file_path, python_exe)
             action = self.runner.attach(proc)
             if action == "stop":
                 terminate_process_tree(proc)
@@ -1645,6 +2267,11 @@ class AstraEditGUI:
         self.update_cursor_position()
 
     def show_tab_context_menu(self, event):
+        idx = self._tab_index_at(event)
+        if idx is not None:
+            tab = self._tab_from_index(idx)
+            if tab:
+                self.notebook.select(tab.frame)
         try:
             self.tab_context_menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -1674,10 +2301,17 @@ class AstraEditGUI:
 
         self.new_tab(file_path)
         self.save_recent_file(file_path)
+        self._maybe_reveal_in_explorer(file_path)
 
     def save_current(self):
         tab = self.get_current_tab()
-        if tab and tab.save():
+        if not tab:
+            return
+        if tab.is_readonly:
+            messagebox.showinfo(t("readonly_title"), t("readonly_save"))
+            self.save_as()
+            return
+        if tab.save():
             self.status_var.set(t("saved", name=tab.get_short_name()))
 
     def save_as(self):
@@ -1733,7 +2367,7 @@ class AstraEditGUI:
 
         self.find_window = tk.Toplevel(self.root)
         self.find_window.title(t("dlg_find"))
-        self.find_window.geometry("500x150")
+        self.find_window.geometry("540x200")
         self.find_window.configure(bg=self.bg_color)
         self.find_window.transient(self.root)
 
@@ -1753,15 +2387,7 @@ class AstraEditGUI:
         self.find_entry.focus()
         self.find_entry.select_range(0, tk.END)
 
-        self.regex_var = tk.BooleanVar(value=self.use_regex)
-        tk.Checkbutton(
-            self.find_window,
-            text=t("dlg_regex"),
-            variable=self.regex_var,
-            bg=self.bg_color,
-            fg=self.fg_color,
-            selectcolor=self.line_num_bg,
-        ).pack(pady=5)
+        self._add_search_options(self.find_window)
 
         btn_frame = tk.Frame(self.find_window, bg=self.bg_color)
         btn_frame.pack(pady=10)
@@ -1796,7 +2422,7 @@ class AstraEditGUI:
 
         self.find_window = tk.Toplevel(self.root)
         self.find_window.title(t("dlg_replace"))
-        self.find_window.geometry("500x220")
+        self.find_window.geometry("540x280")
         self.find_window.configure(bg=self.bg_color)
         self.find_window.transient(self.root)
 
@@ -1826,15 +2452,7 @@ class AstraEditGUI:
         )
         replace_entry.pack(pady=5, padx=10)
 
-        self.regex_var = tk.BooleanVar(value=self.use_regex)
-        tk.Checkbutton(
-            self.find_window,
-            text=t("dlg_regex"),
-            variable=self.regex_var,
-            bg=self.bg_color,
-            fg=self.fg_color,
-            selectcolor=self.line_num_bg,
-        ).pack(pady=5)
+        self._add_search_options(self.find_window)
 
         btn_frame = tk.Frame(self.find_window, bg=self.bg_color)
         btn_frame.pack(pady=10)
@@ -1870,14 +2488,46 @@ class AstraEditGUI:
             border=0,
         ).pack(side="left", padx=3)
 
-    def _search_spec(self, pattern):
-        if self.regex_var is not None:
-            try:
-                self.use_regex = bool(self.regex_var.get())
-            except tk.TclError:
-                pass
+    def _sync_search_options(self):
         try:
-            return SearchPattern(pattern, self.use_regex)
+            if self.regex_var is not None:
+                self.use_regex = bool(self.regex_var.get())
+            if self.case_var is not None:
+                self.ignore_case = not bool(self.case_var.get())
+            if self.word_var is not None:
+                self.whole_word = bool(self.word_var.get())
+        except tk.TclError:
+            pass
+
+    def _add_search_options(self, parent):
+        self.regex_var = tk.BooleanVar(value=self.use_regex)
+        self.case_var = tk.BooleanVar(value=not self.ignore_case)
+        self.word_var = tk.BooleanVar(value=self.whole_word)
+        row = tk.Frame(parent, bg=self.bg_color)
+        row.pack(pady=4)
+        for var, key in (
+            (self.regex_var, "dlg_regex"),
+            (self.case_var, "dlg_match_case"),
+            (self.word_var, "dlg_whole_word"),
+        ):
+            tk.Checkbutton(
+                row,
+                text=t(key),
+                variable=var,
+                bg=self.bg_color,
+                fg=self.fg_color,
+                selectcolor=self.line_num_bg,
+            ).pack(side="left", padx=6)
+
+    def _search_spec(self, pattern):
+        self._sync_search_options()
+        try:
+            return SearchPattern(
+                pattern,
+                self.use_regex,
+                ignore_case=self.ignore_case,
+                whole_word=self.whole_word,
+            )
         except ValueError as err:
             self.status_var.set(t("regex_error", err=err))
             messagebox.showerror(t("error"), t("regex_error", err=err))
@@ -2105,6 +2755,320 @@ class AstraEditGUI:
         self.autosave_enabled = self.autosave_var.get()
         save_config({"autosave": self.autosave_enabled})
 
+    def cycle_tab(self, delta):
+        n = len(self._tabs)
+        if n < 2:
+            return
+        try:
+            current = self.notebook.index(self.notebook.select())
+        except tk.TclError:
+            return
+        self.notebook.select((current + delta) % n)
+
+    def toggle_comment_current(self):
+        tab = self.get_current_tab()
+        if tab:
+            tab.toggle_comment()
+
+    def insert_snippet_current(self, key):
+        tab = self.get_current_tab()
+        if tab:
+            tab.insert_snippet(key)
+
+    def autocomplete_current(self):
+        tab = self.get_current_tab()
+        if tab:
+            tab.autocomplete()
+
+    def show_completions(self, tab, words, prefix):
+        self._hide_completions()
+        try:
+            bbox = tab.text_area.bbox(tk.INSERT)
+        except tk.TclError:
+            bbox = None
+        if not bbox:
+            tab.text_area.insert(tk.INSERT, words[0][len(prefix):])
+            return
+        x, y, _w, h = bbox
+        abs_x = tab.text_area.winfo_rootx() + x
+        abs_y = tab.text_area.winfo_rooty() + y + h
+        win = tk.Toplevel(self.root)
+        win.wm_overrideredirect(True)
+        win.geometry("+%d+%d" % (abs_x, abs_y))
+        listing = tk.Listbox(
+            win,
+            height=min(8, len(words)),
+            bg=self.line_num_bg,
+            fg=self.fg_color,
+            selectbackground="#007acc",
+            font=self.editor_font,
+            border=0,
+            highlightthickness=1,
+        )
+        listing.pack()
+        for word in words:
+            listing.insert(tk.END, word)
+        listing.selection_set(0)
+        listing.activate(0)
+
+        def apply(event=None):
+            sel = listing.curselection()
+            if not sel:
+                self._hide_completions()
+                return
+            chosen = listing.get(sel[0])
+            tab.text_area.insert(tk.INSERT, chosen[len(prefix):])
+            self._hide_completions()
+            tab.text_area.focus_set()
+
+        def cancel(event=None):
+            self._hide_completions()
+            tab.text_area.focus_set()
+
+        listing.bind("<Return>", apply)
+        listing.bind("<Tab>", apply)
+        listing.bind("<Double-1>", apply)
+        listing.bind("<Escape>", cancel)
+        listing.bind("<FocusOut>", cancel)
+        self._complete_win = win
+        listing.focus_set()
+
+    def _hide_completions(self):
+        win = self._complete_win
+        self._complete_win = None
+        if win is not None:
+            try:
+                win.destroy()
+            except tk.TclError:
+                pass
+
+    def zoom_in(self):
+        if self.font_size < 28:
+            self.font_size += 1
+            self._apply_fonts()
+
+    def zoom_out(self):
+        if self.font_size > 8:
+            self.font_size -= 1
+            self._apply_fonts()
+
+    def zoom_reset(self):
+        self.font_size = DEFAULT_FONT_SIZE
+        self._apply_fonts()
+
+    def _on_zoom_wheel(self, event):
+        if event.delta > 0:
+            self.zoom_in()
+        else:
+            self.zoom_out()
+        return "break"
+
+    def _apply_fonts(self):
+        self.editor_font = (self.mono_font, self.font_size)
+        self.tab_pixels = self._measure_tab_pixels()
+        for tab in self._tabs:
+            tab.apply_font(self.editor_font, self.tab_pixels)
+        cons = (self.mono_font, max(9, self.font_size - 1))
+        self.console_area.configure(font=cons)
+        self.input_entry.configure(font=cons)
+        save_config({"font_size": self.font_size})
+
+    def choose_interpreter(self):
+        initial = self.python_executable or sys.executable
+        path = filedialog.askopenfilename(
+            title=t("interpreter_title"),
+            initialdir=str(pathlib.Path(initial).parent),
+        )
+        if not path:
+            return
+        self.python_executable = path
+        save_config({"python_executable": path})
+        self.status_var.set(t("interpreter_current", path=path))
+
+    def use_auto_interpreter(self):
+        self.python_executable = ""
+        save_config({"python_executable": ""})
+        tab = self.get_current_tab()
+        path = tab.file_path if tab else os.getcwd()
+        exe = resolve_python_executable(path)
+        self.status_var.set(t("interpreter_current", path=exe))
+
+    def toggle_explorer(self):
+        self.show_explorer = bool(self.explorer_var.get())
+        save_config({"show_explorer": self.show_explorer})
+        panes = self.hpaned.panes()
+        shown = str(self.explorer_frame) in [str(p) for p in panes]
+        if self.show_explorer and not shown:
+            self.hpaned.add(self.explorer_frame, before=self.paned_window, minsize=140, width=220)
+        elif not self.show_explorer and shown:
+            try:
+                self.hpaned.forget(self.explorer_frame)
+            except tk.TclError:
+                pass
+
+    def _fs_iid(self, path):
+        return os.path.abspath(path).replace("\\", "/")
+
+    def _iid_fs(self, iid):
+        return os.path.normpath(iid)
+
+    def _set_explorer_root(self, path):
+        root = os.path.abspath(path)
+        if not os.path.isdir(root):
+            return
+        self.explorer_root = root
+        self._git_map = git_status_map(root)
+        for child in self.explorer_tree.get_children(""):
+            self.explorer_tree.delete(child)
+        iid = self._fs_iid(root)
+        try:
+            self.explorer_tree.insert(
+                "",
+                "end",
+                iid=iid,
+                text=os.path.basename(root) or root,
+                open=True,
+            )
+        except tk.TclError:
+            return
+        self._explorer_fill(iid, root)
+
+    def _explorer_label(self, name, full):
+        mark = getattr(self, "_git_map", {}).get(os.path.normpath(full))
+        if mark:
+            return "%s  %s" % (name, mark)
+        return name
+
+    def _explorer_fill(self, parent_id, abs_path):
+        try:
+            names = os.listdir(abs_path)
+        except OSError:
+            return
+        names.sort(key=lambda n: (not os.path.isdir(os.path.join(abs_path, n)), n.lower()))
+        for name in names:
+            if name in EXPLORER_SKIP:
+                continue
+            full = os.path.join(abs_path, name)
+            iid = self._fs_iid(full)
+            try:
+                self.explorer_tree.insert(
+                    parent_id,
+                    "end",
+                    iid=iid,
+                    text=self._explorer_label(name, full),
+                    open=False,
+                )
+            except tk.TclError:
+                continue
+            if os.path.isdir(full):
+                dummy = iid + "/."
+                try:
+                    self.explorer_tree.insert(iid, "end", iid=dummy, text="")
+                except tk.TclError:
+                    pass
+
+    def _on_explorer_open(self, event=None):
+        sel = self.explorer_tree.focus()
+        if not sel:
+            return
+        path = self._iid_fs(sel)
+        if not os.path.isdir(path):
+            return
+        children = self.explorer_tree.get_children(sel)
+        if len(children) == 1 and self.explorer_tree.item(children[0], "text") == "":
+            self.explorer_tree.delete(children[0])
+            self._explorer_fill(sel, path)
+
+    def _on_explorer_activate(self, event=None):
+        sel = self.explorer_tree.focus()
+        if not sel:
+            return
+        path = self._iid_fs(sel)
+        if os.path.isfile(path):
+            self.open_file(path)
+        elif os.path.isdir(path):
+            self.explorer_tree.item(sel, open=True)
+            self._on_explorer_open()
+
+    def _maybe_reveal_in_explorer(self, file_path):
+        if not self.explorer_root:
+            parent = str(pathlib.Path(file_path).parent)
+            self._set_explorer_root(parent)
+
+    def _watch_files(self):
+        if self._reload_open:
+            try:
+                self.root.after(WATCH_INTERVAL_MS, self._watch_files)
+            except tk.TclError:
+                return
+            return
+        for tab in list(self._tabs):
+            if not os.path.isfile(tab.file_path):
+                continue
+            mtime = file_mtime(tab.file_path)
+            if mtime is None or tab.disk_mtime is None:
+                tab.disk_mtime = mtime
+                continue
+            if mtime <= tab.disk_mtime + 1e-3:
+                continue
+            self._reload_open = True
+            try:
+                self.notebook.select(tab.frame)
+                if tab.is_modified:
+                    ok = messagebox.askyesno(
+                        t("reload_title"),
+                        t("reload_modified", name=tab.get_short_name()),
+                    )
+                else:
+                    ok = messagebox.askyesno(
+                        t("reload_title"),
+                        t("reload_msg", name=tab.get_short_name()),
+                    )
+                if ok:
+                    self._reload_tab(tab)
+                else:
+                    tab.disk_mtime = mtime
+            finally:
+                self._reload_open = False
+            break
+        try:
+            self.root.after(WATCH_INTERVAL_MS, self._watch_files)
+        except tk.TclError:
+            return
+
+    def _reload_tab(self, tab):
+        try:
+            doc = Document.open(tab.file_path)
+        except (OSError, UnicodeError, ValueError) as err:
+            messagebox.showerror(t("error"), t("load_error", err=err))
+            tab.disk_mtime = file_mtime(tab.file_path)
+            return
+        was_disabled = str(tab.text_area.cget("state")) == "disabled"
+        tab.text_area.config(state="normal")
+        tab.doc = doc
+        tab.text_area.delete("1.0", tk.END)
+        tab.text_area.insert("1.0", doc.text)
+        tab.text_area.edit_modified(False)
+        tab.is_modified = False
+        tab.disk_mtime = file_mtime(tab.file_path)
+        tab.invalidate_lexer()
+        tab.update_syntax_highlighting(force=True)
+        tab.update_line_numbers()
+        if was_disabled or doc.readonly:
+            tab.text_area.config(state="disabled")
+        self.update_tab_title(tab)
+
+    def _save_session(self):
+        paths = []
+        for tab in self._tabs:
+            if os.path.isfile(tab.file_path):
+                paths.append(tab.file_path)
+        idx = 0
+        current = self.get_current_tab()
+        if current and current.file_path in paths:
+            idx = paths.index(current.file_path)
+        save_config({"session_files": paths, "session_index": idx})
+
     def schedule_autosave(self):
         if self.autosave_enabled:
             for tab in self._tabs:
@@ -2116,7 +3080,20 @@ class AstraEditGUI:
                             tab.file_encoding,
                             tab.file_newline,
                         )
-                    except Exception as e:
+                    except UnicodeEncodeError:
+                        try:
+                            write_text_file(
+                                str(autosave_path_for(tab.file_path)),
+                                tab.text_area.get("1.0", "end-1c"),
+                                "utf-8",
+                                tab.file_newline,
+                            )
+                        except OSError as e:
+                            print_status(
+                                t("write_error", path=str(autosave_path_for(tab.file_path)), err=e),
+                                "error",
+                            )
+                    except OSError as e:
                         print_status(
                             t("write_error", path=str(autosave_path_for(tab.file_path)), err=e),
                             "error",
@@ -2160,7 +3137,7 @@ class AstraEditGUI:
     def show_help(self):
         help_win = tk.Toplevel(self.root)
         help_win.title(t("help_title"))
-        help_win.geometry("520x600")
+        help_win.geometry("520x720")
         help_win.configure(bg=self.bg_color)
         help_win.transient(self.root)
 
@@ -2187,6 +3164,10 @@ class AstraEditGUI:
             ("Ctrl + G", t("sc_goto")),
             ("Ctrl + Z", t("sc_undo")),
             ("Ctrl + Y", t("sc_redo")),
+            ("Ctrl + /", t("sc_comment")),
+            ("Ctrl + Space", t("sc_complete")),
+            ("Ctrl + Tab", t("sc_next_tab")),
+            ("Ctrl + = / - / 0", t("sc_zoom")),
             ("F1", t("sc_help")),
         ]
 
@@ -2249,7 +3230,11 @@ class AstraEditGUI:
                 if any(tab.is_modified for tab in self._tabs):
                     return
 
-        self.root.quit()
+        self._save_session()
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            pass
 
     def run(self):
         self.root.mainloop()
@@ -2297,6 +3282,7 @@ def launch_tui(files, cli_lang=None):
 def launch_gui(files):
     if not tk:
         return False
+    windows_dpi_aware()
     AstraEditGUI(files if files else None).run()
     return True
 

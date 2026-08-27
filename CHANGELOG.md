@@ -1,5 +1,40 @@
 # Changelog
 
+## 4.7 — Python editor, not only a notepad
+
+Includes the 4.6.1 correctness fixes, then the 4.7 editor features from the review roadmap. File layout is still a single `astraedit.py` (plus `i18n.py`).
+
+### 4.6.1 (included)
+
+- Autosave drafts restore when the original path does not exist yet (`untitled.txt` / `notatka.txt`). TUI auto-loads that draft.
+- Tab context menu (right-click) targets the tab under the cursor, not the active tab. Middle-click closes that tab.
+- Bracket matching after click and paste, not only KeyRelease.
+- Ctrl+S on a read-only file explains why and opens Save As.
+- Literal find/replace no longer interprets `\1` in the replacement.
+- Highlighting is debounced; lexer and size are cached on the tab. Line-count×64 size guess is gone.
+- Failed `write_text_file` no longer prints and re-raises (callers show the error). Autosave drafts fall back to UTF-8 if the original codec cannot encode.
+- Docs: encoding notes no longer claim a UTF-8-with-replacement path (latin-1 always succeeds).
+
+### 4.7 features
+
+- Auto-indent on Enter (extra level after a `:`) and Tab = 4 spaces. Shift+Tab outdents. Tab on `def` / `class` / `try` / `for` / `ifmain` / `main` expands a snippet.
+- Ctrl+/ toggles `# ` comments (GUI selection or TUI current line).
+- Project explorer (cwd). Double-click opens a file. `git status --porcelain` marks show next to names when `.git` exists.
+- F5 uses `.venv`/`venv` walking up from the file, or Run → Python interpreter. TUI F5 also passes `-u`.
+- Disk watcher: prompt to reload when a file changes outside the editor.
+- Find/Replace: Match case, Whole word.
+- Ctrl+Tab / Ctrl+Shift+Tab cycle tabs. Ctrl+= / − / 0 and Ctrl+wheel zoom. Monospace font is picked from a fallback list. Windows DPI awareness.
+- Session restore: last open files (on disk) come back when you start without CLI paths.
+- Ctrl+Space completes a prefix from identifiers in the current buffer.
+- Compatibility launcher is `Astraedit-4.7.py` (the 4.5 and 4.6 names are gone).
+
+### TUI
+
+- Ctrl+/ comment uses `c-_` (prompt_toolkit has no `c-slash`; that name crashed startup).
+- Leaving the editor (`Ctrl+Q`) clears the terminal so the shell prompt is not mixed with the last frame.
+
+Deferred (still not 4.7): embedded terminal, multi-cursor, code folding. 5.0 still holds a real debugger, Git commit/diff, split panes, minimap, plugin API.
+
 ## 4.6 — Stability release
 
 Numbering: this is the 4.5.x follow-up. **5.0 stays reserved** for the feature milestone in the README roadmap (autocomplete, Git, debugger).

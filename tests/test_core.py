@@ -8,6 +8,8 @@ from unittest import mock
 
 from i18n import _STRINGS, get_lang, normalize_lang, set_lang, t
 from astraedit import (
+    Application,
+    AstraEditTUI,
     NEWLINE_CR,
     NEWLINE_CRLF,
     NEWLINE_LF,
@@ -19,19 +21,25 @@ from astraedit import (
     ProcessManager,
     SearchPattern,
     autosave_path_for,
+    buffer_completions,
     code_char_mask,
+    detect_venv_python,
+    expand_snippet,
     find_matching_bracket,
     get_best_lexer,
     get_lexer_for_filename,
     highlight_policy,
     is_python_source,
     newer_autosave,
+    next_line_indent,
     next_untitled_name,
     offset_to_tk_index,
     popen_script,
     read_text_file_smart,
+    resolve_python_executable,
     tk_index_to_offset,
     terminate_process_tree,
+    toggle_hash_comments,
     write_text_file,
 )
 
@@ -303,6 +311,56 @@ class TestDocumentView(unittest.TestCase):
             self.assertTrue(doc.modified)
             self.assertEqual(path.read_text(encoding="utf-8"), "old")
 
+    def test_newer_autosave_when_original_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "untitled.txt"
+            draft = autosave_path_for(str(path))
+            write_text_file(str(draft), "draft-body", encoding="utf-8")
+            self.assertEqual(newer_autosave(str(path)), draft)
+
+
+class TestEditingHelpers(unittest.TestCase):
+    def test_next_line_indent_colon(self):
+        self.assertEqual(next_line_indent("def foo():", tab_size=4), "    ")
+        self.assertEqual(next_line_indent("    if x:", tab_size=4), "        ")
+        self.assertEqual(next_line_indent("    x = 1", tab_size=4), "    ")
+        self.assertEqual(next_line_indent("# todo:", tab_size=4), "")
+
+    def test_toggle_hash_comments(self):
+        commented, uncommented = toggle_hash_comments(["    x = 1", "    y = 2"])
+        self.assertFalse(uncommented)
+        self.assertEqual(commented, ["    # x = 1", "    # y = 2"])
+        restored, was_uncomment = toggle_hash_comments(commented)
+        self.assertTrue(was_uncomment)
+        self.assertEqual(restored, ["    x = 1", "    y = 2"])
+
+    def test_expand_snippet(self):
+        text, first = expand_snippet("def ${1:name}(${2}):\n    ${3:pass}")
+        self.assertEqual(first, "name")
+        self.assertIn("def name():", text)
+        self.assertIn("    pass", text)
+
+    def test_buffer_completions(self):
+        words = buffer_completions("foo_bar foo_baz foo", "foo_")
+        self.assertEqual(words, ["foo_bar", "foo_baz"])
+
+    def test_detect_venv_python(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            if os.name == "nt":
+                exe = Path(tmp) / ".venv" / "Scripts" / "python.exe"
+            else:
+                exe = Path(tmp) / ".venv" / "bin" / "python"
+            exe.parent.mkdir(parents=True)
+            exe.write_text("", encoding="utf-8")
+            nested = Path(tmp) / "pkg" / "mod.py"
+            nested.parent.mkdir(parents=True)
+            nested.write_text("x=1\n", encoding="utf-8")
+            self.assertEqual(detect_venv_python(str(nested)), str(exe))
+            self.assertEqual(
+                resolve_python_executable(str(nested), configured="C:/Custom/python.exe"),
+                "C:/Custom/python.exe",
+            )
+
     def test_newer_autosave_detected(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "doc.txt"
@@ -336,6 +394,24 @@ class TestSearch(unittest.TestCase):
         self.assertEqual(count, 1)
         self.assertEqual(text, "baz bar")
 
+    def test_literal_replace_preserves_backslashes(self):
+        spec = SearchPattern("a", False)
+        text, count = spec.replace_in("a", r"\1", count=1)
+        self.assertEqual(count, 1)
+        self.assertEqual(text, r"\1")
+
+    def test_case_sensitive(self):
+        spec = SearchPattern("AbC", False, ignore_case=False)
+        self.assertIsNone(spec.find("xxabcxx"))
+        self.assertIsNotNone(spec.find("xxAbCxx"))
+
+    def test_whole_word(self):
+        spec = SearchPattern("cat", False, ignore_case=True, whole_word=True)
+        self.assertIsNone(spec.find("category"))
+        match = spec.find("a cat sat")
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(0), "cat")
+
 
 class TestHighlightAndBrackets(unittest.TestCase):
     def test_highlight_policy(self):
@@ -362,6 +438,17 @@ class TestHighlightAndBrackets(unittest.TestCase):
         mask2 = code_char_mask(text, lexer, real)
         match = find_matching_bracket(text, real, 1, "(", ")", mask2)
         self.assertEqual(match, text.rfind(")"))
+
+
+class TestTUIBindings(unittest.TestCase):
+    @unittest.skipUnless(Application, "prompt_toolkit not installed")
+    def test_key_bindings_construct(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "x.py"
+            path.write_text("x = 1\n", encoding="utf-8")
+            tui = AstraEditTUI(str(path))
+            kb = tui.create_key_bindings()
+            self.assertTrue(len(kb.bindings) > 0)
 
 
 if __name__ == "__main__":
