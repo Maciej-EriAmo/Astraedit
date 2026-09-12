@@ -2109,12 +2109,15 @@ class AstraEditGUI:
             borderwidth=0,
         )
         style.map("TNotebook.Tab", background=[("selected", self.accent_color)])
+        tree_font = (self.mono_font, max(9, self.font_size - 1))
         style.configure(
             "Treeview",
             background=self.bg_color,
             foreground=self.fg_color,
             fieldbackground=self.bg_color,
             borderwidth=0,
+            font=tree_font,
+            rowheight=tkfont.Font(root=self.root, font=tree_font).metrics("linespace") + 4,
         )
         style.map("Treeview", background=[("selected", self.accent_color)])
 
@@ -3448,6 +3451,10 @@ class AstraEditGUI:
         cons = (self.mono_font, max(9, self.font_size - 1))
         self.console_area.configure(font=cons)
         self.input_entry.configure(font=cons)
+        self.terminal_area.configure(font=cons)
+        self.terminal_entry.configure(font=cons)
+        row_h = tkfont.Font(root=self.root, font=cons).metrics("linespace") + 4
+        ttk.Style().configure("Treeview", font=cons, rowheight=row_h)
         save_config({"font_size": self.font_size})
 
     def choose_interpreter(self):
