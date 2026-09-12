@@ -23,6 +23,7 @@ from astraedit import (
     autosave_path_for,
     buffer_completions,
     code_char_mask,
+    compute_fold_end,
     detect_venv_python,
     expand_snippet,
     find_matching_bracket,
@@ -333,6 +334,34 @@ class TestEditingHelpers(unittest.TestCase):
         restored, was_uncomment = toggle_hash_comments(commented)
         self.assertTrue(was_uncomment)
         self.assertEqual(restored, ["    x = 1", "    y = 2"])
+
+    def test_compute_fold_end(self):
+        lines = [
+            "def foo():",
+            "    x = 1",
+            "    y = 2",
+            "",
+            "def bar():",
+            "    pass",
+        ]
+        self.assertEqual(compute_fold_end(lines, 0), 2)
+        self.assertEqual(compute_fold_end(lines, 4), 5)
+        self.assertIsNone(compute_fold_end(lines, 1))
+        self.assertIsNone(compute_fold_end(lines, 5))
+
+    def test_compute_fold_end_nested(self):
+        lines = [
+            "if True:",
+            "    if False:",
+            "        z = 1",
+            "    w = 2",
+            "after",
+        ]
+        self.assertEqual(compute_fold_end(lines, 0), 3)
+        self.assertEqual(compute_fold_end(lines, 1), 2)
+
+    def test_compute_fold_end_no_body(self):
+        self.assertIsNone(compute_fold_end(["def x():", "", "", "y = 1"], 0))
 
     def test_expand_snippet(self):
         text, first = expand_snippet("def ${1:name}(${2}):\n    ${3:pass}")

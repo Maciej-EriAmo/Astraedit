@@ -202,6 +202,41 @@ def toggle_hash_comments(lines):
     return out, False
 
 
+def compute_fold_end(lines, start_idx):
+    """0-indexed end line of the indented block starting after ``start_idx``.
+
+    A line is foldable when the next non-blank line is indented deeper than
+    it. Returns the last line of the block (trailing blank lines excluded),
+    or None if ``start_idx`` is not a fold start.
+    """
+    if start_idx < 0 or start_idx >= len(lines):
+        return None
+    start_line = lines[start_idx]
+    if not start_line.strip():
+        return None
+    start_indent = len(start_line) - len(start_line.lstrip())
+
+    i = start_idx + 1
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i >= len(lines):
+        return None
+    if len(lines[i]) - len(lines[i].lstrip()) <= start_indent:
+        return None
+
+    end = i
+    j = i
+    while j < len(lines):
+        if lines[j].strip():
+            if len(lines[j]) - len(lines[j].lstrip()) <= start_indent:
+                break
+            end = j
+        j += 1
+    while end > start_idx and not lines[end].strip():
+        end -= 1
+    return end
+
+
 def buffer_completions(text, prefix, limit=40):
     if not prefix:
         return []
@@ -1201,6 +1236,11 @@ class EditorTab(DocumentView):
 
         self.text_area.tag_config("matching_bracket", background="#404040", borderwidth=1)
 
+        self.folded = set()
+        self.text_area.tag_config("folded", elide=True)
+        self.line_numbers.tag_config("folded", elide=True)
+        self.line_numbers.tag_config("fold_active", foreground="#4fc1ff")
+
         self.text_area.bind("<<Modified>>", self.on_modified)
         self.text_area.bind("<KeyRelease>", self.on_key_release_combined)
         self.text_area.bind("<Button-1>", lambda e: self.app.root.after(10, self.update_combined))
@@ -1211,6 +1251,8 @@ class EditorTab(DocumentView):
         self.text_area.bind("<Shift-Tab>", self.on_shift_tab)
         self.text_area.bind("<Control-slash>", self.toggle_comment)
         self.text_area.bind("<Control-space>", self.autocomplete)
+        self.text_area.bind("<F9>", self.toggle_fold_at_cursor)
+        self.line_numbers.bind("<Button-1>", self.on_gutter_click)
         for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
             self.text_area.bind(seq, lambda e: self.app.root.after_idle(self.update_line_numbers), add="+")
 
@@ -1475,10 +1517,53 @@ class EditorTab(DocumentView):
             self.line_numbers.delete("1.0", "end")
             self.line_numbers.insert("1.0", "\n".join(str(i) for i in range(1, line_count + 1)))
             self.line_numbers.config(state="disabled")
+            self.apply_folds()
         try:
             self.line_numbers.yview_moveto(self.text_area.yview()[0])
         except tk.TclError:
             pass
+
+    def apply_folds(self):
+        """Re-tag hidden lines for the active folds (elide on both gutter and body)."""
+        self.text_area.tag_remove("folded", "1.0", "end")
+        self.line_numbers.tag_remove("folded", "1.0", "end")
+        self.line_numbers.tag_remove("fold_active", "1.0", "end")
+        if not self.folded:
+            return
+        lines = self.text_area.get("1.0", "end-1c").split("\n")
+        stale = []
+        for start_line in self.folded:
+            end_line = compute_fold_end(lines, start_line - 1)
+            if end_line is None:
+                stale.append(start_line)
+                continue
+            a, b = f"{start_line + 1}.0", f"{end_line + 2}.0"
+            self.text_area.tag_add("folded", a, b)
+            self.line_numbers.tag_add("folded", a, b)
+            self.line_numbers.tag_add("fold_active", f"{start_line}.0", f"{start_line}.end")
+        for start_line in stale:
+            self.folded.discard(start_line)
+
+    def toggle_fold_at_line(self, line_no):
+        if line_no in self.folded:
+            self.folded.discard(line_no)
+        else:
+            lines = self.text_area.get("1.0", "end-1c").split("\n")
+            if compute_fold_end(lines, line_no - 1) is None:
+                return
+            self.folded.add(line_no)
+        self.apply_folds()
+
+    def toggle_fold_at_cursor(self, event=None):
+        line_no = int(self.text_area.index(tk.INSERT).split(".")[0])
+        self.toggle_fold_at_line(line_no)
+        return "break"
+
+    def on_gutter_click(self, event):
+        index = self.line_numbers.index(f"@{event.x},{event.y}")
+        line_no = int(index.split(".")[0])
+        self.toggle_fold_at_line(line_no)
+        return "break"
 
     def highlight_matching_bracket(self):
         self.text_area.tag_remove("matching_bracket", "1.0", tk.END)
@@ -1918,6 +2003,7 @@ class AstraEditGUI:
         editmenu.add_command(label=t("menu_goto"), command=self.goto_line_dialog)
         editmenu.add_separator()
         editmenu.add_command(label=t("menu_comment"), command=self.toggle_comment_current)
+        editmenu.add_command(label=t("menu_toggle_fold"), command=self.toggle_fold_current)
         snippet_menu = tk.Menu(editmenu, tearoff=0, bg=self.bg_color, fg=self.fg_color)
         for key, snippet_id in SNIPPET_MENU:
             snippet_menu.add_command(
@@ -2770,6 +2856,11 @@ class AstraEditGUI:
         if tab:
             tab.toggle_comment()
 
+    def toggle_fold_current(self):
+        tab = self.get_current_tab()
+        if tab:
+            tab.toggle_fold_at_cursor()
+
     def insert_snippet_current(self, key):
         tab = self.get_current_tab()
         if tab:
@@ -3165,6 +3256,7 @@ class AstraEditGUI:
             ("Ctrl + Z", t("sc_undo")),
             ("Ctrl + Y", t("sc_redo")),
             ("Ctrl + /", t("sc_comment")),
+            ("F9", t("sc_fold")),
             ("Ctrl + Space", t("sc_complete")),
             ("Ctrl + Tab", t("sc_next_tab")),
             ("Ctrl + = / - / 0", t("sc_zoom")),
