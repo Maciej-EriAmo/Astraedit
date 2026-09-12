@@ -32,6 +32,83 @@ BRACKET_SCAN_LIMIT = 2000
 DEFAULT_TAB_SIZE = 4
 DEFAULT_FONT_SIZE = 11
 WATCH_INTERVAL_MS = 1500
+DEFAULT_THEME = "dark"
+THEMES = {
+    "dark": {
+        "bg": "#1e1e1e",
+        "fg": "#d4d4d4",
+        "cursor": "#ffffff",
+        "selection": "#264f78",
+        "panel_bg": "#252526",
+        "panel_fg": "#858585",
+        "console_bg": "#111111",
+        "console_fg": "#cccccc",
+        "accent": "#007acc",
+        "accent_secondary": "#0e639c",
+        "accent_fg": "#ffffff",
+        "button_bg": "#404040",
+        "button_fg": "#ffffff",
+        "danger_bg": "#8b0000",
+        "danger_bg_active": "#ff3333",
+        "success": "#00ff00",
+        "border": "#333333",
+        "tab_bg": "#2d2d2d",
+        "stderr": "#ff6b6b",
+        "info": "#61afef",
+        "multi_cursor_bg": "#528bff",
+        "fold_indicator": "#4fc1ff",
+        "bracket_match": "#404040",
+        "syntax": {
+            "Keyword": "#569cd6",
+            "Name.Builtin": "#dcdcaa",
+            "Comment": "#6a9955",
+            "String": "#ce9178",
+            "Number": "#b5cea8",
+            "Operator": "#d4d4d4",
+            "Punctuation": "#d4d4d4",
+            "Name": "#9cdcfe",
+        },
+    },
+    "light": {
+        "bg": "#ffffff",
+        "fg": "#1e1e1e",
+        "cursor": "#000000",
+        "selection": "#add6ff",
+        "panel_bg": "#f3f3f3",
+        "panel_fg": "#6e6e6e",
+        "console_bg": "#f5f5f5",
+        "console_fg": "#1e1e1e",
+        "accent": "#0066b8",
+        "accent_secondary": "#004c8c",
+        "accent_fg": "#ffffff",
+        "button_bg": "#e0e0e0",
+        "button_fg": "#1e1e1e",
+        "danger_bg": "#c62828",
+        "danger_bg_active": "#e53935",
+        "success": "#2e7d32",
+        "border": "#cccccc",
+        "tab_bg": "#ececec",
+        "stderr": "#c62828",
+        "info": "#0066b8",
+        "multi_cursor_bg": "#3378f6",
+        "fold_indicator": "#0066b8",
+        "bracket_match": "#d6ecff",
+        "syntax": {
+            "Keyword": "#0000ff",
+            "Name.Builtin": "#795e26",
+            "Comment": "#008000",
+            "String": "#a31515",
+            "Number": "#098658",
+            "Operator": "#1e1e1e",
+            "Punctuation": "#1e1e1e",
+            "Name": "#001080",
+        },
+    },
+}
+
+
+def theme_colors(name):
+    return THEMES.get(name) or THEMES[DEFAULT_THEME]
 TOKEN_TAG_RULES = (
     ("Keyword", "Keyword"),
     ("Comment", "Comment"),
@@ -1257,28 +1334,24 @@ class EditorTab(DocumentView):
 
         self.text_area.vbar.config(command=self.on_scrollbar)
 
-        tags = {
-            "Keyword": "#569cd6",
-            "Name.Builtin": "#dcdcaa",
-            "Comment": "#6a9955",
-            "String": "#ce9178",
-            "Number": "#b5cea8",
-            "Operator": "#d4d4d4",
-            "Punctuation": "#d4d4d4",
-            "Name": "#9cdcfe",
-        }
-        for tag, color in tags.items():
+        for tag, color in app.syntax_colors.items():
             self.text_area.tag_config(tag, foreground=color)
 
-        self.text_area.tag_config("matching_bracket", background="#404040", borderwidth=1)
+        self.text_area.tag_config(
+            "matching_bracket", background=app.bracket_match_color, borderwidth=1
+        )
 
         self.folded = set()
         self.text_area.tag_config("folded", elide=True)
         self.line_numbers.tag_config("folded", elide=True)
-        self.line_numbers.tag_config("fold_active", foreground="#4fc1ff")
+        self.line_numbers.tag_config("fold_active", foreground=app.fold_indicator_color)
 
-        self.text_area.tag_config("multi_sel", background="#528bff", foreground="#ffffff")
-        self.text_area.tag_config("multi_cursor", background="#528bff", foreground="#ffffff")
+        self.text_area.tag_config(
+            "multi_sel", background=app.multi_cursor_bg, foreground=app.accent_fg
+        )
+        self.text_area.tag_config(
+            "multi_cursor", background=app.multi_cursor_bg, foreground=app.accent_fg
+        )
 
         self.text_area.bind("<<Modified>>", self.on_modified)
         self.text_area.bind("<KeyRelease>", self.on_key_release_combined)
@@ -1874,16 +1947,34 @@ class AstraEditGUI:
                 except Exception:
                     pass
 
-        self.bg_color = "#1e1e1e"
-        self.fg_color = "#d4d4d4"
-        self.cursor_color = "#ffffff"
-        self.selection_color = "#264f78"
-        self.line_num_bg = "#252526"
-        self.line_num_fg = "#858585"
-        self.console_bg = "#111111"
-        self.console_fg = "#cccccc"
-
         cfg = load_config()
+        self.theme_name = str(cfg.get("theme") or DEFAULT_THEME)
+        th = theme_colors(self.theme_name)
+        self.bg_color = th["bg"]
+        self.fg_color = th["fg"]
+        self.cursor_color = th["cursor"]
+        self.selection_color = th["selection"]
+        self.line_num_bg = th["panel_bg"]
+        self.line_num_fg = th["panel_fg"]
+        self.console_bg = th["console_bg"]
+        self.console_fg = th["console_fg"]
+        self.accent_color = th["accent"]
+        self.accent_secondary = th["accent_secondary"]
+        self.accent_fg = th["accent_fg"]
+        self.button_bg = th["button_bg"]
+        self.button_fg = th["button_fg"]
+        self.danger_bg = th["danger_bg"]
+        self.danger_bg_active = th["danger_bg_active"]
+        self.success_color = th["success"]
+        self.border_color = th["border"]
+        self.tab_bg = th["tab_bg"]
+        self.stderr_color = th["stderr"]
+        self.info_color = th["info"]
+        self.multi_cursor_bg = th["multi_cursor_bg"]
+        self.fold_indicator_color = th["fold_indicator"]
+        self.bracket_match_color = th["bracket_match"]
+        self.syntax_colors = th["syntax"]
+
         self.autosave_enabled = bool(cfg.get("autosave", True))
         self.autosave_interval = 30000
         self.tab_size = int(cfg.get("tab_size", DEFAULT_TAB_SIZE) or DEFAULT_TAB_SIZE)
@@ -1958,8 +2049,8 @@ class AstraEditGUI:
         self.status_bar = tk.Label(
             self.root,
             textvariable=self.status_var,
-            bg="#007acc",
-            fg="white",
+            bg=self.accent_color,
+            fg=self.accent_fg,
             anchor="w",
             padx=5,
             font=("Arial", 9),
@@ -1967,18 +2058,18 @@ class AstraEditGUI:
         self.status_bar.pack(side="bottom", fill="x")
 
         self.hpaned = tk.PanedWindow(
-            self.root, orient=tk.HORIZONTAL, sashwidth=4, bg="#333333"
+            self.root, orient=tk.HORIZONTAL, sashwidth=4, bg=self.border_color
         )
         self.hpaned.pack(fill="both", expand=True)
 
         self.explorer_frame = tk.Frame(self.hpaned, bg=self.line_num_bg, width=220)
-        exp_header = tk.Frame(self.explorer_frame, bg="#252526")
+        exp_header = tk.Frame(self.explorer_frame, bg=self.line_num_bg)
         exp_header.pack(fill="x")
         self.explorer_title = tk.Label(
             exp_header,
             text=t("explorer_title"),
-            bg="#252526",
-            fg="white",
+            bg=self.line_num_bg,
+            fg=self.fg_color,
             font=("Arial", 9, "bold"),
             anchor="w",
         )
@@ -1998,7 +2089,7 @@ class AstraEditGUI:
         self.explorer_tree.bind("<Return>", self._on_explorer_activate)
 
         self.paned_window = tk.PanedWindow(
-            self.hpaned, orient=tk.VERTICAL, sashwidth=4, bg="#333333"
+            self.hpaned, orient=tk.VERTICAL, sashwidth=4, bg=self.border_color
         )
         if self.show_explorer:
             self.hpaned.add(self.explorer_frame, minsize=140, width=220)
@@ -2012,12 +2103,12 @@ class AstraEditGUI:
         style.configure("TNotebook", background=self.bg_color, borderwidth=0)
         style.configure(
             "TNotebook.Tab",
-            background="#2d2d2d",
+            background=self.tab_bg,
             foreground=self.fg_color,
             padding=[10, 5],
             borderwidth=0,
         )
-        style.map("TNotebook.Tab", background=[("selected", "#007acc")])
+        style.map("TNotebook.Tab", background=[("selected", self.accent_color)])
         style.configure(
             "Treeview",
             background=self.bg_color,
@@ -2025,7 +2116,7 @@ class AstraEditGUI:
             fieldbackground=self.bg_color,
             borderwidth=0,
         )
-        style.map("Treeview", background=[("selected", "#007acc")])
+        style.map("Treeview", background=[("selected", self.accent_color)])
 
         self.notebook = ttk.Notebook(editor_container)
         self.notebook.pack(fill="both", expand=True)
@@ -2042,14 +2133,14 @@ class AstraEditGUI:
         console_frame = tk.Frame(self.bottom_notebook, bg=self.console_bg)
         self.bottom_notebook.add(console_frame, text=t("console_title"))
 
-        cons_toolbar = tk.Frame(console_frame, bg="#252526", height=28)
+        cons_toolbar = tk.Frame(console_frame, bg=self.line_num_bg, height=28)
         cons_toolbar.pack(fill="x", side="top")
 
         self.console_title = tk.Label(
             cons_toolbar,
             text=f"📟 {t('console_title')}",
-            bg="#252526",
-            fg="white",
+            bg=self.line_num_bg,
+            fg=self.fg_color,
             font=("Arial", 9, "bold"),
         )
         self.console_title.pack(side="left", padx=8)
@@ -2058,8 +2149,8 @@ class AstraEditGUI:
             cons_toolbar,
             text=f"🗑 {t('btn_clear')}",
             command=self.clear_console,
-            bg="#404040",
-            fg="white",
+            bg=self.button_bg,
+            fg=self.button_fg,
             border=0,
             font=("Arial", 8),
             padx=8,
@@ -2071,8 +2162,8 @@ class AstraEditGUI:
             cons_toolbar,
             text=f"⬛ {t('btn_stop')}",
             command=self.stop_process,
-            bg="#8b0000",
-            fg="white",
+            bg=self.danger_bg,
+            fg=self.button_fg,
             border=0,
             font=("Arial", 8, "bold"),
             state="disabled",
@@ -2090,9 +2181,9 @@ class AstraEditGUI:
             border=0,
         )
         self.console_area.pack(fill="both", expand=True)
-        self.console_area.tag_config("stderr", foreground="#ff6b6b")
-        self.console_area.tag_config("stdin", foreground="#00ff00")
-        self.console_area.tag_config("info", foreground="#61afef")
+        self.console_area.tag_config("stderr", foreground=self.stderr_color)
+        self.console_area.tag_config("stdin", foreground=self.success_color)
+        self.console_area.tag_config("info", foreground=self.info_color)
 
         input_frame = tk.Frame(console_frame, bg=self.console_bg, height=30)
         input_frame.pack(fill="x", side="bottom")
@@ -2101,15 +2192,15 @@ class AstraEditGUI:
             input_frame,
             text=">>> ",
             bg=self.console_bg,
-            fg="#00ff00",
+            fg=self.success_color,
             font=("Consolas", 10, "bold"),
         ).pack(side="left", padx=5)
 
         self.input_entry = tk.Entry(
             input_frame,
             bg=self.console_bg,
-            fg="white",
-            insertbackground="white",
+            fg=self.console_fg,
+            insertbackground=self.console_fg,
             font=("Consolas", 10),
             border=0,
             relief="flat",
@@ -2122,21 +2213,21 @@ class AstraEditGUI:
         terminal_frame = tk.Frame(self.bottom_notebook, bg=self.console_bg)
         self.bottom_notebook.add(terminal_frame, text=t("terminal_title"))
 
-        term_toolbar = tk.Frame(terminal_frame, bg="#252526", height=28)
+        term_toolbar = tk.Frame(terminal_frame, bg=self.line_num_bg, height=28)
         term_toolbar.pack(fill="x", side="top")
         tk.Label(
             term_toolbar,
             text=f"🖳 {t('terminal_title')}",
-            bg="#252526",
-            fg="white",
+            bg=self.line_num_bg,
+            fg=self.fg_color,
             font=("Arial", 9, "bold"),
         ).pack(side="left", padx=8)
         tk.Button(
             term_toolbar,
             text=f"🗑 {t('btn_clear')}",
             command=self.clear_terminal,
-            bg="#404040",
-            fg="white",
+            bg=self.button_bg,
+            fg=self.button_fg,
             border=0,
             font=("Arial", 8),
             padx=8,
@@ -2146,8 +2237,8 @@ class AstraEditGUI:
             term_toolbar,
             text=f"↻ {t('btn_restart_terminal')}",
             command=self.restart_terminal,
-            bg="#404040",
-            fg="white",
+            bg=self.button_bg,
+            fg=self.button_fg,
             border=0,
             font=("Arial", 8),
             padx=8,
@@ -2164,8 +2255,8 @@ class AstraEditGUI:
             border=0,
         )
         self.terminal_area.pack(fill="both", expand=True)
-        self.terminal_area.tag_config("stderr", foreground="#ff6b6b")
-        self.terminal_area.tag_config("info", foreground="#61afef")
+        self.terminal_area.tag_config("stderr", foreground=self.stderr_color)
+        self.terminal_area.tag_config("info", foreground=self.info_color)
 
         terminal_input_frame = tk.Frame(terminal_frame, bg=self.console_bg, height=30)
         terminal_input_frame.pack(fill="x", side="bottom")
@@ -2173,14 +2264,14 @@ class AstraEditGUI:
             terminal_input_frame,
             text="$ ",
             bg=self.console_bg,
-            fg="#00ff00",
+            fg=self.success_color,
             font=(self.mono_font, 10, "bold"),
         ).pack(side="left", padx=5)
         self.terminal_entry = tk.Entry(
             terminal_input_frame,
             bg=self.console_bg,
-            fg="white",
-            insertbackground="white",
+            fg=self.console_fg,
+            insertbackground=self.console_fg,
             font=(self.mono_font, max(9, self.font_size - 1)),
             border=0,
             relief="flat",
@@ -2306,6 +2397,22 @@ class AstraEditGUI:
         )
         viewmenu.add_cascade(label=t("menu_language"), menu=langmenu)
         viewmenu.add_separator()
+        thememenu = tk.Menu(viewmenu, tearoff=0, bg=self.bg_color, fg=self.fg_color)
+        self.theme_var = tk.StringVar(value=self.theme_name)
+        thememenu.add_radiobutton(
+            label=t("menu_theme_dark"),
+            variable=self.theme_var,
+            value="dark",
+            command=lambda: self.change_theme("dark"),
+        )
+        thememenu.add_radiobutton(
+            label=t("menu_theme_light"),
+            variable=self.theme_var,
+            value="light",
+            command=lambda: self.change_theme("light"),
+        )
+        viewmenu.add_cascade(label=t("menu_theme"), menu=thememenu)
+        viewmenu.add_separator()
         self.explorer_var = tk.BooleanVar(value=self.show_explorer)
         viewmenu.add_checkbutton(
             label=t("menu_explorer"),
@@ -2339,6 +2446,13 @@ class AstraEditGUI:
         set_lang(lang)
         save_config({"language": lang})
         self.refresh_ui()
+
+    def change_theme(self, name):
+        if name == self.theme_name:
+            return
+        self.theme_name = name
+        save_config({"theme": name})
+        messagebox.showinfo(t("info"), t("theme_restart_needed"))
 
     def refresh_ui(self):
         self.setup_menu()
@@ -2425,7 +2539,7 @@ class AstraEditGUI:
         )
         self.log_to_console(f"{'=' * 60}\n\n", "info")
 
-        self.stop_btn.config(state="normal", bg="#ff3333")
+        self.stop_btn.config(state="normal", bg=self.danger_bg_active)
         self.input_entry.focus()
 
         threading.Thread(
@@ -2486,7 +2600,7 @@ class AstraEditGUI:
                 if msg_type == "text":
                     self.log_to_console(content, tag)
                 elif msg_type == "status" and content == "stopped":
-                    self.stop_btn.config(state="disabled", bg="#8b0000")
+                    self.stop_btn.config(state="disabled", bg=self.danger_bg)
                     self.runner.finish()
         except queue.Empty:
             pass
@@ -2522,7 +2636,7 @@ class AstraEditGUI:
             return
         terminate_process_tree(proc)
         self.log_to_console(f"\n⚠ {t('process_stopped')}\n", "stderr")
-        self.stop_btn.config(state="disabled", bg="#8b0000")
+        self.stop_btn.config(state="disabled", bg=self.danger_bg)
 
     def clear_console(self):
         self.console_area.config(state="normal")
@@ -2849,8 +2963,8 @@ class AstraEditGUI:
             btn_frame,
             text=t("dlg_find_next"),
             command=self.find_next,
-            bg="#007acc",
-            fg="white",
+            bg=self.accent_color,
+            fg=self.accent_fg,
             padx=10,
             pady=5,
             border=0,
@@ -2914,8 +3028,8 @@ class AstraEditGUI:
             btn_frame,
             text=t("dlg_replace_one"),
             command=lambda: self.replace_one(self.find_entry.get(), replace_entry.get()),
-            bg="#007acc",
-            fg="white",
+            bg=self.accent_color,
+            fg=self.accent_fg,
             padx=10,
             pady=5,
             border=0,
@@ -2924,8 +3038,8 @@ class AstraEditGUI:
             btn_frame,
             text=t("dlg_replace_all"),
             command=lambda: self.replace_all(self.find_entry.get(), replace_entry.get()),
-            bg="#0e639c",
-            fg="white",
+            bg=self.accent_secondary,
+            fg=self.accent_fg,
             padx=10,
             pady=5,
             border=0,
@@ -3151,8 +3265,8 @@ class AstraEditGUI:
             btn_frame,
             text=t("dlg_go"),
             command=go,
-            bg="#007acc",
-            fg="white",
+            bg=self.accent_color,
+            fg=self.accent_fg,
             padx=15,
             pady=5,
             border=0,
@@ -3263,7 +3377,7 @@ class AstraEditGUI:
             height=min(8, len(words)),
             bg=self.line_num_bg,
             fg=self.fg_color,
-            selectbackground="#007acc",
+            selectbackground=self.accent_color,
             font=self.editor_font,
             border=0,
             highlightthickness=1,
@@ -3650,7 +3764,7 @@ class AstraEditGUI:
                 width=20,
                 anchor="w",
                 bg=self.bg_color,
-                fg="#569cd6",
+                fg=self.info_color,
             ).pack(side="left")
             tk.Label(
                 row,
@@ -3665,8 +3779,8 @@ class AstraEditGUI:
             help_win,
             text=t("dlg_close"),
             command=help_win.destroy,
-            bg="#007acc",
-            fg="white",
+            bg=self.accent_color,
+            fg=self.accent_fg,
             border=0,
             padx=20,
             pady=8,
