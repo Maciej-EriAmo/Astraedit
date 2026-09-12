@@ -474,6 +474,42 @@ def popen_script(file_path, python_exe=None):
     return subprocess.Popen([exe, "-u", str(file_path)], **popen_kw)
 
 
+def spawn_shell(cwd):
+    """Start the platform default shell for the embedded terminal.
+
+    No PTY (stdlib only): the shell sees plain pipes, not a real console, so
+    interactive full-screen programs (pagers, another REPL, editors) and
+    non-ASCII echo will not behave like a real terminal. Plain commands and
+    their ASCII output work fine.
+    """
+    if os.name == "nt":
+        cmd = [os.environ.get("COMSPEC", "cmd.exe")]
+    else:
+        cmd = [os.environ.get("SHELL", "/bin/sh")]
+    popen_kw = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "stdin": subprocess.PIPE,
+        "text": True,
+        "bufsize": 1,
+        "cwd": str(cwd),
+        "encoding": "utf-8",
+        "errors": "replace",
+    }
+    if os.name == "nt":
+        popen_kw["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        popen_kw["start_new_session"] = True
+    proc = subprocess.Popen(cmd, **popen_kw)
+    if os.name == "nt":
+        try:
+            proc.stdin.write("chcp 65001 >nul\n")
+            proc.stdin.flush()
+        except OSError:
+            pass
+    return proc
+
+
 # ---- Shared I/O ----
 def is_binary_bytes(raw):
     return b"\0" in raw[:1024]
@@ -1881,6 +1917,8 @@ class AstraEditGUI:
         self._tabs = []
         self.runner = ProcessManager()
         self.msg_queue = queue.Queue()
+        self.terminal_mgr = ProcessManager()
+        self.terminal_msg_queue = queue.Queue()
         self.recent_menu = None
 
         self.setup_ui()
@@ -1908,6 +1946,7 @@ class AstraEditGUI:
         self._set_explorer_root(os.getcwd())
         self.schedule_autosave()
         self.root.after(100, self.process_queue)
+        self.root.after(100, self.process_terminal_queue)
         self.root.after(WATCH_INTERVAL_MS, self._watch_files)
 
     def _measure_tab_pixels(self):
@@ -1996,8 +2035,12 @@ class AstraEditGUI:
         self.tab_context_menu = tk.Menu(self.root, tearoff=0, bg=self.bg_color, fg=self.fg_color)
         self.notebook.bind("<Button-3>", self.show_tab_context_menu)
 
-        console_frame = tk.Frame(self.paned_window, bg=self.console_bg)
-        self.paned_window.add(console_frame, stretch="never", height=250)
+        self.bottom_notebook = ttk.Notebook(self.paned_window)
+        self.paned_window.add(self.bottom_notebook, stretch="never", height=250)
+        self.bottom_notebook.bind("<<NotebookTabChanged>>", self._on_bottom_tab_changed)
+
+        console_frame = tk.Frame(self.bottom_notebook, bg=self.console_bg)
+        self.bottom_notebook.add(console_frame, text=t("console_title"))
 
         cons_toolbar = tk.Frame(console_frame, bg="#252526", height=28)
         cons_toolbar.pack(fill="x", side="top")
@@ -2075,6 +2118,76 @@ class AstraEditGUI:
         self.input_entry.bind("<Return>", self.send_input)
         self.console_area.configure(font=(self.mono_font, max(9, self.font_size - 1)))
         self.input_entry.configure(font=(self.mono_font, max(9, self.font_size - 1)))
+
+        terminal_frame = tk.Frame(self.bottom_notebook, bg=self.console_bg)
+        self.bottom_notebook.add(terminal_frame, text=t("terminal_title"))
+
+        term_toolbar = tk.Frame(terminal_frame, bg="#252526", height=28)
+        term_toolbar.pack(fill="x", side="top")
+        tk.Label(
+            term_toolbar,
+            text=f"🖳 {t('terminal_title')}",
+            bg="#252526",
+            fg="white",
+            font=("Arial", 9, "bold"),
+        ).pack(side="left", padx=8)
+        tk.Button(
+            term_toolbar,
+            text=f"🗑 {t('btn_clear')}",
+            command=self.clear_terminal,
+            bg="#404040",
+            fg="white",
+            border=0,
+            font=("Arial", 8),
+            padx=8,
+            pady=2,
+        ).pack(side="right", padx=5, pady=3)
+        self.terminal_restart_btn = tk.Button(
+            term_toolbar,
+            text=f"↻ {t('btn_restart_terminal')}",
+            command=self.restart_terminal,
+            bg="#404040",
+            fg="white",
+            border=0,
+            font=("Arial", 8),
+            padx=8,
+            pady=2,
+        )
+        self.terminal_restart_btn.pack(side="right", padx=5, pady=3)
+
+        self.terminal_area = scrolledtext.ScrolledText(
+            terminal_frame,
+            bg=self.console_bg,
+            fg=self.console_fg,
+            font=(self.mono_font, max(9, self.font_size - 1)),
+            state="disabled",
+            border=0,
+        )
+        self.terminal_area.pack(fill="both", expand=True)
+        self.terminal_area.tag_config("stderr", foreground="#ff6b6b")
+        self.terminal_area.tag_config("info", foreground="#61afef")
+
+        terminal_input_frame = tk.Frame(terminal_frame, bg=self.console_bg, height=30)
+        terminal_input_frame.pack(fill="x", side="bottom")
+        tk.Label(
+            terminal_input_frame,
+            text="$ ",
+            bg=self.console_bg,
+            fg="#00ff00",
+            font=(self.mono_font, 10, "bold"),
+        ).pack(side="left", padx=5)
+        self.terminal_entry = tk.Entry(
+            terminal_input_frame,
+            bg=self.console_bg,
+            fg="white",
+            insertbackground="white",
+            font=(self.mono_font, max(9, self.font_size - 1)),
+            border=0,
+            relief="flat",
+        )
+        self.terminal_entry.pack(side="left", fill="x", expand=True, padx=5, pady=5)
+        self.terminal_entry.bind("<Return>", self.send_terminal_input)
+        self._terminal_started = False
 
     def _tab_index_at(self, event):
         try:
@@ -2165,6 +2278,8 @@ class AstraEditGUI:
         runmenu.add_command(label=t("menu_interpreter_auto"), command=self.use_auto_interpreter)
         runmenu.add_separator()
         runmenu.add_command(label=f"🗑 {t('menu_clear')}", command=self.clear_console)
+        runmenu.add_separator()
+        runmenu.add_command(label=f"🖳 {t('menu_terminal')}", command=self.focus_terminal)
         menubar.add_cascade(label=t("menu_run"), menu=runmenu)
 
         viewmenu = tk.Menu(menubar, tearoff=0, bg=self.bg_color, fg=self.fg_color)
@@ -2252,6 +2367,7 @@ class AstraEditGUI:
         self._bind("<F2>", self.save_as)
         self._bind("<F1>", self.show_help)
         self._bind("<F5>", self.run_current_file)
+        self._bind("<Control-grave>", self.focus_terminal)
         self._bind("<Control-f>", self.show_find_dialog)
         self._bind("<Control-h>", self.show_replace_dialog)
         self._bind("<Control-g>", self.goto_line_dialog)
@@ -2412,6 +2528,113 @@ class AstraEditGUI:
         self.console_area.config(state="normal")
         self.console_area.delete("1.0", tk.END)
         self.console_area.config(state="disabled")
+
+    def focus_terminal(self):
+        for tab_id in self.bottom_notebook.tabs():
+            if self.bottom_notebook.tab(tab_id, "text") == t("terminal_title"):
+                self.bottom_notebook.select(tab_id)
+                break
+        self.start_terminal()
+        self.terminal_entry.focus_set()
+
+    def _on_bottom_tab_changed(self, event=None):
+        current = self.bottom_notebook.select()
+        if current and self.bottom_notebook.tab(current, "text") == t("terminal_title"):
+            self.start_terminal()
+
+    def start_terminal(self):
+        if self._terminal_started and self.terminal_mgr.running_proc() is not None:
+            return
+        if not self.terminal_mgr.try_start():
+            return
+        self._terminal_started = True
+        tab = self.get_current_tab()
+        cwd = pathlib.Path(tab.file_path).parent if tab else pathlib.Path.cwd()
+        threading.Thread(target=self._run_terminal_shell, args=(cwd,), daemon=True).start()
+
+    def restart_terminal(self):
+        proc = self.terminal_mgr.request_stop()
+        if proc is not None:
+            terminate_process_tree(proc)
+        self.terminal_mgr.finish()
+        self._terminal_started = False
+        self.clear_terminal()
+        self.start_terminal()
+
+    def _run_terminal_shell(self, cwd):
+        try:
+            proc = spawn_shell(cwd)
+            self.terminal_mgr.attach(proc)
+            threading.Thread(
+                target=self._terminal_reader, args=(proc.stdout, None), daemon=True
+            ).start()
+            threading.Thread(
+                target=self._terminal_reader, args=(proc.stderr, "stderr"), daemon=True
+            ).start()
+            proc.wait()
+            self.terminal_msg_queue.put(("text", f"\n{t('process_stopped')}\n", "info"))
+        except Exception as e:
+            self.terminal_msg_queue.put(("text", f"\n❌ {t('run_error', err=e)}\n", "stderr"))
+        finally:
+            self.terminal_mgr.finish()
+            self._terminal_started = False
+
+    def _terminal_reader(self, stream, tag):
+        try:
+            buf = []
+            while True:
+                ch = stream.read(1)
+                if ch == "":
+                    break
+                buf.append(ch)
+                if ch == "\n" or len(buf) >= 16:
+                    self.terminal_msg_queue.put(("text", "".join(buf), tag))
+                    buf = []
+            if buf:
+                self.terminal_msg_queue.put(("text", "".join(buf), tag))
+        except Exception:
+            pass
+        finally:
+            try:
+                stream.close()
+            except Exception:
+                pass
+
+    def process_terminal_queue(self):
+        try:
+            while True:
+                _msg_type, content, tag = self.terminal_msg_queue.get_nowait()
+                self.log_to_terminal(content, tag)
+        except queue.Empty:
+            pass
+        self.root.after(100, self.process_terminal_queue)
+
+    def log_to_terminal(self, text, tag=None):
+        self.terminal_area.config(state="normal")
+        self.terminal_area.insert(tk.END, text, tag)
+        self.terminal_area.see(tk.END)
+        self.terminal_area.config(state="disabled")
+
+    def send_terminal_input(self, event=None):
+        text = self.terminal_entry.get()
+        self.terminal_entry.delete(0, tk.END)
+        proc = self.terminal_mgr.running_proc()
+        if not proc:
+            if text:
+                self.log_to_terminal(f"⚠ {t('process_not_running')}\n", "stderr")
+            return
+        try:
+            # No manual echo here: the shell itself echoes the command back
+            # as part of its prompt output (unlike a plain script's stdin).
+            proc.stdin.write(text + "\n")
+            proc.stdin.flush()
+        except Exception as e:
+            self.log_to_terminal(f"❌ {t('stdin_error', err=e)}\n", "stderr")
+
+    def clear_terminal(self):
+        self.terminal_area.config(state="normal")
+        self.terminal_area.delete("1.0", tk.END)
+        self.terminal_area.config(state="disabled")
 
     # ==========================================
     # TABS
@@ -3407,6 +3630,7 @@ class AstraEditGUI:
             ("Ctrl + /", t("sc_comment")),
             ("F9", t("sc_fold")),
             ("Ctrl + D", t("sc_multi_cursor")),
+            ("Ctrl + `", t("sc_terminal")),
             ("Ctrl + Space", t("sc_complete")),
             ("Ctrl + Tab", t("sc_next_tab")),
             ("Ctrl + = / - / 0", t("sc_zoom")),
@@ -3459,6 +3683,10 @@ class AstraEditGUI:
             proc = self.runner.request_stop()
             if proc is not None:
                 terminate_process_tree(proc)
+
+        term_proc = self.terminal_mgr.request_stop()
+        if term_proc is not None:
+            terminate_process_tree(term_proc)
 
         modified_tabs = [tab for tab in self._tabs if tab.is_modified]
         if modified_tabs:
