@@ -26,7 +26,6 @@ _ALIASES = {
 
 _STRINGS: Dict[str, Dict[str, str]] = {
     "en": {
-        "app_name": "AstraEdit 4.7",
         "untitled_file": "untitled.txt",
         "untitled_n": "untitled_{n}.txt",
         "status_ready": "Ready | F5: Run | F1: Help",
@@ -61,7 +60,6 @@ _STRINGS: Dict[str, Dict[str, str]] = {
         "reload_modified": "{name} changed on disk and you have unsaved edits. Reload and lose your changes?",
         "interpreter_title": "Python interpreter",
         "interpreter_current": "Interpreter: {path}",
-        "interpreter_auto": "Auto-detect (venv, then AstraEdit Python)",
         "menu_explorer": "Project explorer",
         "menu_interpreter": "Python interpreter…",
         "menu_interpreter_auto": "Use auto-detect interpreter",
@@ -207,7 +205,6 @@ _STRINGS: Dict[str, Dict[str, str]] = {
         "cli_lang_saved": "Language set to {lang}",
     },
     "pl": {
-        "app_name": "AstraEdit 4.7",
         "untitled_file": "notatka.txt",
         "untitled_n": "notatka_{n}.txt",
         "status_ready": "Gotowy | F5: Uruchom | F1: Pomoc",
@@ -242,7 +239,6 @@ _STRINGS: Dict[str, Dict[str, str]] = {
         "reload_modified": "{name} zmienił się na dysku, a masz niezapisane zmiany. Wczytać ponownie i odrzucić edycje?",
         "interpreter_title": "Interpreter Pythona",
         "interpreter_current": "Interpreter: {path}",
-        "interpreter_auto": "Wykrywaj automatycznie (venv, potem Python AstraEdita)",
         "menu_explorer": "Eksplorator projektu",
         "menu_interpreter": "Interpreter Pythona…",
         "menu_interpreter_auto": "Automatyczny interpreter",

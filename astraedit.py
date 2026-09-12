@@ -3292,6 +3292,7 @@ def main(argv=None):
     if args.lang:
         set_lang(args.lang)
         save_config({"language": get_lang()})
+        print(t("cli_lang_saved", lang=get_lang()))
 
     use_gui = False
     if args.gui:
