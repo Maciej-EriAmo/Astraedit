@@ -1042,7 +1042,33 @@ class AstraEditTUI(DocumentView):
     def get_status_bar(self):
         row = self.editor.document.cursor_position_row + 1
         col = self.editor.document.cursor_position_col + 1
-        return [("class:status", t("ln_col", row=row, col=col, status=self.status_text))]
+        full = t("ln_col", row=row, col=col, status=self.status_text)
+
+        from prompt_toolkit.application import get_app_or_none
+
+        app = get_app_or_none()
+        width = app.output.get_size().columns if app is not None else 0
+        if not width or len(full) <= width:
+            return [("class:status", full)]
+
+        # Too narrow for every hint: keep as many as fit, drop the rest.
+        sentinel = "\x00"
+        prefix, _, suffix = t("ln_col", row=row, col=col, status=sentinel).partition(sentinel)
+        budget = max(0, width - len(prefix) - len(suffix) - 2)
+        hints = self.status_text.split(" | ")
+        shown = []
+        used = 0
+        for hint in hints:
+            add = (" | " if shown else "") + hint
+            if used + len(add) > budget:
+                break
+            shown.append(hint)
+            used += len(add)
+        text = prefix + " | ".join(shown)
+        if len(shown) < len(hints):
+            text += " …"
+        text += suffix
+        return [("class:status", text)]
 
     def _pop_float(self, app):
         if app.layout.container.floats:

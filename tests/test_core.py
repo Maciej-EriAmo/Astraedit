@@ -479,6 +479,28 @@ class TestTUIBindings(unittest.TestCase):
             kb = tui.create_key_bindings()
             self.assertTrue(len(kb.bindings) > 0)
 
+    @unittest.skipUnless(Application, "prompt_toolkit not installed")
+    def test_status_bar_shrinks_to_fit_narrow_terminal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "x.py"
+            path.write_text("x = 1\n", encoding="utf-8")
+            tui = AstraEditTUI(str(path))
+
+            fake_app = mock.Mock()
+            fake_app.output.get_size.return_value = mock.Mock(columns=200)
+            with mock.patch("prompt_toolkit.application.get_app_or_none", return_value=fake_app):
+                wide_text = tui.get_status_bar()[0][1]
+            self.assertIn("|", wide_text)
+            self.assertNotIn("…", wide_text)
+
+            fake_app.output.get_size.return_value = mock.Mock(columns=30)
+            with mock.patch("prompt_toolkit.application.get_app_or_none", return_value=fake_app):
+                narrow_text = tui.get_status_bar()[0][1]
+            self.assertLessEqual(len(narrow_text), 30)
+            self.assertIn("Ln 1, Col 1", narrow_text)
+            self.assertIn("…", narrow_text)
+            self.assertLess(len(narrow_text), len(wide_text))
+
 
 if __name__ == "__main__":
     unittest.main()
