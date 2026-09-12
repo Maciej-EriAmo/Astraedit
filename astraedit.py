@@ -1241,9 +1241,13 @@ class EditorTab(DocumentView):
         self.line_numbers.tag_config("folded", elide=True)
         self.line_numbers.tag_config("fold_active", foreground="#4fc1ff")
 
+        self.text_area.tag_config("multi_sel", background="#528bff", foreground="#ffffff")
+        self.text_area.tag_config("multi_cursor", background="#528bff", foreground="#ffffff")
+
         self.text_area.bind("<<Modified>>", self.on_modified)
         self.text_area.bind("<KeyRelease>", self.on_key_release_combined)
         self.text_area.bind("<Button-1>", lambda e: self.app.root.after(10, self.update_combined))
+        self.text_area.bind("<Button-1>", lambda e: self.clear_multi_cursor(), add="+")
         self.text_area.bind("<<Paste>>", lambda e: self.app.root.after(20, self._after_paste), add="+")
         self.text_area.bind("<Return>", self.on_return)
         self.text_area.bind("<Tab>", self.on_tab_key)
@@ -1251,6 +1255,9 @@ class EditorTab(DocumentView):
         self.text_area.bind("<Shift-Tab>", self.on_shift_tab)
         self.text_area.bind("<Control-slash>", self.toggle_comment)
         self.text_area.bind("<Control-space>", self.autocomplete)
+        self.text_area.bind("<Control-d>", self.add_next_occurrence)
+        self.text_area.bind("<Escape>", lambda e: self.clear_multi_cursor())
+        self.text_area.bind("<KeyPress>", self._multi_cursor_keypress)
         self.text_area.bind("<F9>", self.toggle_fold_at_cursor)
         self.line_numbers.bind("<Button-1>", self.on_gutter_click)
         for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
@@ -1381,8 +1388,15 @@ class EditorTab(DocumentView):
         self.text_area.configure(font=font, tabs=tab_pixels)
         self.line_numbers.configure(font=font)
 
+    def _multi_cursor_active(self):
+        return bool(self.text_area.tag_ranges("multi_sel") or self.text_area.tag_ranges("multi_cursor"))
+
     def on_return(self, event=None):
         text = self.text_area
+        if self._multi_cursor_active():
+            self._apply_multi_edit(insert_text="\n")
+            self.update_line_numbers()
+            return "break"
         before = text.get("insert linestart", "insert")
         text.insert("insert", "\n" + next_line_indent(before, self.app.tab_size, self.app.use_spaces))
         self.update_line_numbers()
@@ -1397,6 +1411,9 @@ class EditorTab(DocumentView):
 
     def on_tab_key(self, event=None):
         text = self.text_area
+        if self._multi_cursor_active():
+            self._apply_multi_edit(insert_text=" " * self.app.tab_size if self.app.use_spaces else "\t")
+            return "break"
         try:
             text.index("sel.first")
             return self._indent_selection(1)
@@ -1564,6 +1581,132 @@ class EditorTab(DocumentView):
         line_no = int(index.split(".")[0])
         self.toggle_fold_at_line(line_no)
         return "break"
+
+    def clear_multi_cursor(self):
+        self.text_area.tag_remove("multi_sel", "1.0", "end")
+        self.text_area.tag_remove("multi_cursor", "1.0", "end")
+
+    def add_next_occurrence(self, event=None):
+        text = self.text_area
+        try:
+            sel_start = text.index("sel.first")
+            sel_end = text.index("sel.last")
+            word = text.get(sel_start, sel_end)
+        except tk.TclError:
+            cursor = text.index(tk.INSERT)
+            try:
+                sel_start = text.index(f"{cursor} wordstart")
+                sel_end = text.index(f"{cursor} wordend")
+            except tk.TclError:
+                return "break"
+            word = text.get(sel_start, sel_end)
+            if not word.strip():
+                return "break"
+            text.tag_add("sel", sel_start, sel_end)
+            text.mark_set(tk.INSERT, sel_end)
+            return "break"
+
+        if not word:
+            return "break"
+        content = text.get("1.0", "end-1c")
+        search_from = tk_index_to_offset(content, sel_end)
+        idx = content.find(word, search_from)
+        if idx < 0:
+            idx = content.find(word, 0)
+        if idx < 0:
+            return "break"
+
+        new_start = offset_to_tk_index(content, idx)
+        new_end = offset_to_tk_index(content, idx + len(word))
+        text.tag_add("multi_sel", sel_start, sel_end)
+        text.tag_remove("sel", "1.0", "end")
+        text.tag_add("sel", new_start, new_end)
+        text.mark_set(tk.INSERT, new_end)
+        text.see(new_end)
+        return "break"
+
+    def _multi_cursor_keypress(self, event):
+        if not self._multi_cursor_active():
+            return None
+        if event.keysym in ("BackSpace",):
+            self._apply_multi_edit(delete=True, backward=True)
+            return "break"
+        if event.keysym in ("Delete",):
+            self._apply_multi_edit(delete=True, backward=False)
+            return "break"
+        if event.char and event.char.isprintable():
+            self._apply_multi_edit(insert_text=event.char)
+            return "break"
+        # Any other key (arrows, Home/End, ...): drop out of multi-cursor and
+        # let the primary cursor handle it normally.
+        self.clear_multi_cursor()
+        return None
+
+    def _apply_multi_edit(self, insert_text=None, delete=False, backward=True):
+        """Apply one edit at every active cursor/selection.
+
+        ``multi_sel`` ranges hold real selected text (from add_next_occurrence)
+        and are replaced like a normal selection. ``multi_cursor`` ranges are
+        a one-character *visual* marker for a plain insertion point left
+        behind after a previous multi-edit -- they must never be treated as
+        selected text, or typing a second character would eat the character
+        the marker happens to sit on.
+        """
+        text = self.text_area
+        content = text.get("1.0", "end-1c")
+
+        sel_ranges = text.tag_ranges("multi_sel")
+        regions = [
+            (str(sel_ranges[i]), str(sel_ranges[i + 1]), True)
+            for i in range(0, len(sel_ranges), 2)
+        ]
+        cursor_ranges = text.tag_ranges("multi_cursor")
+        for i in range(0, len(cursor_ranges), 2):
+            pos = str(cursor_ranges[i])
+            regions.append((pos, pos, False))
+        try:
+            regions.append((text.index("sel.first"), text.index("sel.last"), True))
+        except tk.TclError:
+            regions.append((text.index(tk.INSERT), text.index(tk.INSERT), False))
+        regions.sort(key=lambda r: tk_index_to_offset(content, r[0]), reverse=True)
+
+        text.tag_remove("multi_sel", "1.0", "end")
+        text.tag_remove("multi_cursor", "1.0", "end")
+        text.tag_remove("sel", "1.0", "end")
+
+        was_auto = text.cget("autoseparators")
+        text.edit_separator()  # close off whatever undo group preceded this batch
+        text.config(autoseparators=False)
+        new_positions = []
+        for start, end, has_selection in regions:
+            if insert_text is not None:
+                if has_selection:
+                    text.delete(start, end)
+                text.insert(start, insert_text)
+                new_positions.append(text.index(f"{start}+{len(insert_text)}c"))
+            elif delete:
+                if has_selection:
+                    text.delete(start, end)
+                    new_positions.append(text.index(start))
+                elif backward:
+                    if text.compare(start, ">", "1.0"):
+                        text.delete(f"{start}-1c", start)
+                        new_positions.append(text.index(f"{start}-1c"))
+                    else:
+                        new_positions.append(text.index(start))
+                else:
+                    text.delete(start, f"{start}+1c")
+                    new_positions.append(text.index(start))
+        text.edit_separator()
+        text.config(autoseparators=was_auto)
+
+        new_positions.reverse()  # back to document order (left to right)
+        if new_positions:
+            for pos in new_positions[:-1]:
+                text.tag_add("multi_cursor", pos, f"{pos}+1c")
+            primary = new_positions[-1]
+            text.mark_set(tk.INSERT, primary)
+            text.see(primary)
 
     def highlight_matching_bracket(self):
         self.text_area.tag_remove("matching_bracket", "1.0", tk.END)
@@ -2004,6 +2147,7 @@ class AstraEditGUI:
         editmenu.add_separator()
         editmenu.add_command(label=t("menu_comment"), command=self.toggle_comment_current)
         editmenu.add_command(label=t("menu_toggle_fold"), command=self.toggle_fold_current)
+        editmenu.add_command(label=t("menu_add_occurrence"), command=self.add_next_occurrence_current)
         snippet_menu = tk.Menu(editmenu, tearoff=0, bg=self.bg_color, fg=self.fg_color)
         for key, snippet_id in SNIPPET_MENU:
             snippet_menu.add_command(
@@ -2861,6 +3005,11 @@ class AstraEditGUI:
         if tab:
             tab.toggle_fold_at_cursor()
 
+    def add_next_occurrence_current(self):
+        tab = self.get_current_tab()
+        if tab:
+            tab.add_next_occurrence()
+
     def insert_snippet_current(self, key):
         tab = self.get_current_tab()
         if tab:
@@ -3257,6 +3406,7 @@ class AstraEditGUI:
             ("Ctrl + Y", t("sc_redo")),
             ("Ctrl + /", t("sc_comment")),
             ("F9", t("sc_fold")),
+            ("Ctrl + D", t("sc_multi_cursor")),
             ("Ctrl + Space", t("sc_complete")),
             ("Ctrl + Tab", t("sc_next_tab")),
             ("Ctrl + = / - / 0", t("sc_zoom")),
