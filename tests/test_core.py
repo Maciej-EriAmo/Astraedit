@@ -33,6 +33,7 @@ from astraedit import (
     is_python_source,
     newer_autosave,
     next_line_indent,
+    next_unselected_span,
     next_untitled_name,
     offset_to_tk_index,
     popen_script,
@@ -104,6 +105,22 @@ class TestEncodings(unittest.TestCase):
             text, enc, _ = read_text_file_smart(str(path))
             self.assertEqual(text, POLISH)
             self.assertEqual(enc, "cp1250")
+
+    def test_iso8859_2_polish_detected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "l2.txt"
+            path.write_bytes(POLISH.encode("iso-8859-2"))
+            text, enc, _ = read_text_file_smart(str(path))
+            self.assertEqual(text, POLISH)
+            self.assertEqual(enc, "iso-8859-2")
+
+    def test_latin1_letter_not_stolen_by_earlier_codecs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "y.txt"
+            path.write_bytes("ÿ".encode("latin-1"))
+            text, enc, _ = read_text_file_smart(str(path))
+            self.assertEqual(text, "ÿ")
+            self.assertEqual(enc, "latin-1")
 
     def test_iso8859_2_bytes_roundtrip(self):
         raw = POLISH.encode("iso-8859-2")
@@ -373,6 +390,16 @@ class TestEditingHelpers(unittest.TestCase):
         words = buffer_completions("foo_bar foo_baz foo", "foo_")
         self.assertEqual(words, ["foo_bar", "foo_baz"])
 
+    def test_next_unselected_span_skips_taken(self):
+        self.assertEqual(
+            next_unselected_span("foo bar foo", "foo", 3, [(0, 3)]),
+            (8, 11),
+        )
+        self.assertIsNone(next_unselected_span("foo", "foo", 3, [(0, 3)]))
+        self.assertIsNone(
+            next_unselected_span("foo foo", "foo", 7, [(0, 3), (4, 7)])
+        )
+
     def test_detect_venv_python(self):
         with tempfile.TemporaryDirectory() as tmp:
             if os.name == "nt":
@@ -428,6 +455,11 @@ class TestSearch(unittest.TestCase):
         text, count = spec.replace_in("a", r"\1", count=1)
         self.assertEqual(count, 1)
         self.assertEqual(text, r"\1")
+
+    def test_regex_bad_group_raises_value_error(self):
+        spec = SearchPattern("a", True)
+        with self.assertRaises(ValueError):
+            spec.replace_in("a", r"\1")
 
     def test_case_sensitive(self):
         spec = SearchPattern("AbC", False, ignore_case=False)

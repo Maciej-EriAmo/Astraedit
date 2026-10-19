@@ -214,6 +214,7 @@ _STRINGS: Dict[str, Dict[str, str]] = {
         "arg_tui": "Force terminal (TUI) mode",
         "arg_lang": "Interface language (en or pl)",
         "tui_binary": "# ERROR: Binary files cannot be opened in a text editor\n",
+        "tui_extra_files": "TUI edits one file. Skipped {n}.",
         "cli_lang_saved": "Language set to {lang}",
     },
     "pl": {
@@ -405,6 +406,7 @@ _STRINGS: Dict[str, Dict[str, str]] = {
         "arg_tui": "Wymuś tryb konsolowy (TUI)",
         "arg_lang": "Język interfejsu (en lub pl)",
         "tui_binary": "# BŁĄD: Plik binarny nie może być otwarty w edytorze tekstu\n",
+        "tui_extra_files": "TUI edytuje jeden plik. Pominięto {n}.",
         "cli_lang_saved": "Ustawiono język: {lang}",
     },
 }

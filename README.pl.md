@@ -49,7 +49,7 @@ Hybrydowy edytor tekstu w Pythonie. Działa jako **GUI** (Tkinter) albo **TUI** 
 
 ### Bezpieczeństwo
 - Wykrywanie plików binarnych (bajt NUL w pierwszym 1 KB); taki plik nie jest zapisywany z powrotem jako tekst
-- Próby kodowania po kolei: UTF-8, UTF-8-SIG, CP1250, ISO-8859-2, na końcu Latin-1 (Latin-1 przyjmuje każdy bajt, więc musi być ostatni)
+- Najpierw UTF-8 (UTF-8-SIG, gdy jest BOM). CP1250, ISO-8859-2 i Latin-1 przyjmują prawie każdy bajt, więc edytor zostawia odczyt najbardziej podobny do tekstu. Przy remisie ta kolejność zostaje.
 - Zapis atomowy (tmp + fsync + replace) i `errors=strict`. Przy błędzie kodowania proponowane jest UTF-8; dokument zostaje brudny
 - Wykryte kodowanie i końce linii (`LF` / `CRLF` / `CR`) są zachowywane w GUI i TUI
 - Tryb tylko do odczytu bez uprawnień zapisu

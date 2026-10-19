@@ -49,7 +49,7 @@ Hybrid text editor written in Python. It runs as a **GUI** (Tkinter) or a **TUI*
 
 ### Safety
 - Binary-file detection (NUL in the first 1 KB). Those files are not saved back as text.
-- Encoding tries, in order: UTF-8, UTF-8-SIG, CP1250, ISO-8859-2, then Latin-1 (Latin-1 accepts every byte, so it has to be last)
+- UTF-8 first (UTF-8-SIG when a BOM is present). CP1250, ISO-8859-2 and Latin-1 accept almost every byte, so the editor keeps the decoding that looks most like text. Ties stay in that order.
 - Saves are atomic (temp + fsync + replace) and use strict encoding. A failed encode offers UTF-8; the document stays dirty
 - Detected encoding and newline (`LF` / `CRLF` / `CR`) are kept on save in both GUI and TUI
 - Read-only mode when the file is not writable
@@ -264,7 +264,7 @@ pip install prompt_toolkit
 
 - Binary files are rejected (NUL byte in the first 1 KB) and cannot be overwritten via Save.
 - Check permissions.
-- Tried encodings: UTF-8, UTF-8-SIG, CP1250, ISO-8859-2, then Latin-1. Latin-1 accepts every byte, so a decode always succeeds; there is no UTF-8-with-replacement fallback.
+- Tried encodings: UTF-8 first (UTF-8-SIG with a BOM), then the CP1250 / ISO-8859-2 / Latin-1 decoding that looks most like text. A decode always succeeds; there is no UTF-8-with-replacement fallback.
 
 **Console shows no output**
 
